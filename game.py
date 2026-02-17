@@ -3623,6 +3623,9 @@ closet_msg_timer = 0  # frames to show "found chips!" message
 #   FREEZE      - 4 chips - Press F to freeze all nearby burrbs!
 #   INVISIBILITY- 5 chips - Press I to become invisible!
 #   GIANT MODE  - 6 chips - Press G to become HUGE!
+#   BOUNCE      - 4 chips - Press B to bounce over buildings!
+#   TELEPORT    - 5 chips - Press T to teleport forward!
+#   EARTHQUAKE  - 7 chips - Press Q to stun everything nearby!
 
 # The shop menu
 shop_open = False  # is the shop screen showing?
@@ -3636,6 +3639,9 @@ ABILITIES = [
     ("Freeze", 4, "F", "Freeze all nearby burrbs!"),
     ("Invisibility", 5, "I", "Turn invisible for 5 sec!"),
     ("Giant Mode", 6, "G", "Become HUGE for 8 sec!"),
+    ("Bounce", 4, "B", "Jump over buildings!"),
+    ("Teleport", 5, "T", "Warp forward instantly!"),
+    ("Earthquake", 7, "Q", "Stun everything nearby!"),
 ]
 
 # Which abilities have been unlocked (bought with chips)
@@ -3650,6 +3656,18 @@ freeze_timer = 0  # frames remaining for freeze effect
 invisible_timer = 0  # frames remaining for invisibility
 giant_timer = 0  # frames remaining for giant mode
 giant_scale = 1.0  # current size multiplier (smoothly grows/shrinks)
+bounce_timer = 0  # frames remaining in a bounce (airborne!)
+bounce_cooldown = 0  # frames until next bounce
+bounce_height = 0.0  # current visual height (pixels above ground)
+BOUNCE_DURATION = 45  # how long a bounce lasts (frames)
+teleport_cooldown = 0  # frames until next teleport
+teleport_flash = 0  # frames remaining for the teleport flash effect
+TELEPORT_DISTANCE = 200  # how far you warp forward (pixels)
+earthquake_timer = 0  # frames remaining for earthquake stun
+earthquake_cooldown = 0  # frames until next earthquake
+earthquake_shake = 0  # frames remaining for screen shake
+EARTHQUAKE_DURATION = 240  # how long the stun lasts (4 seconds)
+EARTHQUAKE_RADIUS = 300  # how far the earthquake reaches (pixels)
 
 # Font for UI
 font = pygame.font.Font(None, 28)
@@ -3698,6 +3716,15 @@ TOUCH_ABILITY_BUTTONS = [
         SCREEN_HEIGHT - _br * 7 - 36,
         _br - 4,
         "ability_g",
+    ),
+    ("B", _bx2, SCREEN_HEIGHT - _br * 9 - 44, _br - 4, "ability_b"),
+    ("T", _bx, SCREEN_HEIGHT - _br * 9 - 44, _br - 4, "ability_t"),
+    (
+        "Q",
+        _bx2 + _br + TOUCH_BTN_PAD // 2,
+        SCREEN_HEIGHT - _br * 11 - 52,
+        _br - 4,
+        "ability_q",
     ),
 ]
 
@@ -3808,9 +3835,9 @@ def draw_shop(surface):
     overlay.fill((0, 0, 0, 180))
     surface.blit(overlay, (0, 0))
 
-    # Shop box
+    # Shop box (sized to fit all abilities)
     box_w = 500
-    box_h = 420
+    box_h = 90 + len(ABILITIES) * 52 + 40
     box_x = (SCREEN_WIDTH - box_w) // 2
     box_y = (SCREEN_HEIGHT - box_h) // 2
 
@@ -3904,6 +3931,9 @@ async def main():
     global chips_collected, ability_unlocked
     global dash_cooldown, dash_active
     global freeze_timer, invisible_timer, giant_timer, giant_scale
+    global bounce_timer, bounce_cooldown, bounce_height
+    global teleport_cooldown, teleport_flash
+    global earthquake_timer, earthquake_cooldown, earthquake_shake
     global jumpscare_timer, jumpscare_frame, closet_msg_timer
     global cam_x, cam_y
     global touch_active, touch_move_target, touch_held
@@ -4053,6 +4083,83 @@ async def main():
                     if ability_unlocked[5] and giant_timer <= 0:
                         giant_timer = 480  # 8 seconds
 
+                # Press B to BOUNCE over buildings!
+                if event.key == pygame.K_b:
+                    if (
+                        ability_unlocked[6]
+                        and bounce_timer <= 0
+                        and bounce_cooldown <= 0
+                    ):
+                        if inside_building is None:  # can't bounce indoors!
+                            bounce_timer = BOUNCE_DURATION
+                            bounce_cooldown = 60  # 1 second cooldown
+
+                # Press T to TELEPORT forward!
+                if event.key == pygame.K_t:
+                    if ability_unlocked[7] and teleport_cooldown <= 0:
+                        if inside_building is None:  # can't teleport indoors!
+                            # Teleport in the direction the burrb is facing
+                            tp_x = burrb_x + math.cos(burrb_angle) * TELEPORT_DISTANCE
+                            tp_y = burrb_y + math.sin(burrb_angle) * TELEPORT_DISTANCE
+                            # Clamp to world boundaries
+                            tp_x = max(30, min(WORLD_WIDTH - 30, tp_x))
+                            tp_y = max(30, min(WORLD_HEIGHT - 30, tp_y))
+                            # If we'd land inside a building, scoot to the nearest open spot
+                            if not can_move_to(tp_x, tp_y):
+                                # Try shorter distances until we find open ground
+                                for shrink in range(1, 10):
+                                    shorter = TELEPORT_DISTANCE * (1.0 - shrink * 0.1)
+                                    test_x = burrb_x + math.cos(burrb_angle) * shorter
+                                    test_y = burrb_y + math.sin(burrb_angle) * shorter
+                                    test_x = max(30, min(WORLD_WIDTH - 30, test_x))
+                                    test_y = max(30, min(WORLD_HEIGHT - 30, test_y))
+                                    if can_move_to(test_x, test_y):
+                                        tp_x = test_x
+                                        tp_y = test_y
+                                        break
+                                else:
+                                    tp_x = burrb_x  # can't teleport, stay put
+                                    tp_y = burrb_y
+                            burrb_x = tp_x
+                            burrb_y = tp_y
+                            teleport_cooldown = 90  # 1.5 second cooldown
+                            teleport_flash = 15  # flash effect for 0.25 seconds
+
+                # Press Q for EARTHQUAKE!
+                if event.key == pygame.K_q:
+                    if (
+                        ability_unlocked[8]
+                        and earthquake_timer <= 0
+                        and earthquake_cooldown <= 0
+                    ):
+                        if inside_building is None:  # can't earthquake indoors!
+                            earthquake_timer = EARTHQUAKE_DURATION
+                            earthquake_cooldown = 360  # 6 second cooldown
+                            earthquake_shake = 30  # screen shakes for 0.5 seconds
+                            # Stun all NPCs in range - flip their direction and slow them
+                            for npc in npcs:
+                                if npc.npc_type == "rock":
+                                    continue
+                                eq_dx = npc.x - burrb_x
+                                eq_dy = npc.y - burrb_y
+                                eq_dist = math.sqrt(eq_dx * eq_dx + eq_dy * eq_dy)
+                                if eq_dist < EARTHQUAKE_RADIUS:
+                                    # Push them away from the burrb!
+                                    if eq_dist > 1:
+                                        push_x = (eq_dx / eq_dist) * 20
+                                        push_y = (eq_dy / eq_dist) * 20
+                                        npc.x += push_x
+                                        npc.y += push_y
+                                    npc.dir_timer = EARTHQUAKE_DURATION  # stunned
+                                    npc.speed = 0.0  # frozen in place
+                            # Also stun nearby cars!
+                            for car in cars:
+                                eq_dx = car.x - burrb_x
+                                eq_dy = car.y - burrb_y
+                                eq_dist = math.sqrt(eq_dx * eq_dx + eq_dy * eq_dy)
+                                if eq_dist < EARTHQUAKE_RADIUS:
+                                    car.speed = 0.0  # cars stop
+
             # === TOUCH / MOUSE INPUT ===
             # Handle finger touch events (phones/tablets) AND mouse clicks
             # (touchscreen laptops report mouse events for touch)
@@ -4144,6 +4251,21 @@ async def main():
                                     pygame.KEYDOWN, key=pygame.K_g
                                 )
                                 pygame.event.post(fake_event)
+                            elif btn == "ability_b":
+                                fake_event = pygame.event.Event(
+                                    pygame.KEYDOWN, key=pygame.K_b
+                                )
+                                pygame.event.post(fake_event)
+                            elif btn == "ability_t":
+                                fake_event = pygame.event.Event(
+                                    pygame.KEYDOWN, key=pygame.K_t
+                                )
+                                pygame.event.post(fake_event)
+                            elif btn == "ability_q":
+                                fake_event = pygame.event.Event(
+                                    pygame.KEYDOWN, key=pygame.K_q
+                                )
+                                pygame.event.post(fake_event)
 
                     touch_held = False
                     touch_btn_pressed = None
@@ -4207,6 +4329,18 @@ async def main():
                             pygame.event.post(
                                 pygame.event.Event(pygame.KEYDOWN, key=pygame.K_g)
                             )
+                        elif btn == "ability_b":
+                            pygame.event.post(
+                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_b)
+                            )
+                        elif btn == "ability_t":
+                            pygame.event.post(
+                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_t)
+                            )
+                        elif btn == "ability_q":
+                            pygame.event.post(
+                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_q)
+                            )
                 touch_held = False
                 touch_btn_pressed = None
 
@@ -4214,7 +4348,7 @@ async def main():
         if shop_open and touch_active and touch_held:
             tx, ty = touch_pos
             box_w = 500
-            box_h = 420
+            box_h = 90 + len(ABILITIES) * 52 + 40
             box_x = (SCREEN_WIDTH - box_w) // 2
             box_y = (SCREEN_HEIGHT - box_h) // 2
             # Check if tap is inside the shop box
@@ -4263,6 +4397,40 @@ async def main():
         # Smoothly grow/shrink for giant mode
         target_giant = 2.5 if giant_timer > 0 else 1.0
         giant_scale += (target_giant - giant_scale) * 0.15
+
+        # Bounce timer and height (smooth arc using sine!)
+        if bounce_timer > 0:
+            bounce_timer -= 1
+            # Sine curve: goes up then comes back down smoothly
+            t = bounce_timer / BOUNCE_DURATION  # 1.0 -> 0.0
+            bounce_height = math.sin(t * math.pi) * 80  # max 80 pixels high
+        else:
+            bounce_height = 0.0
+        if bounce_cooldown > 0:
+            bounce_cooldown -= 1
+
+        # Teleport cooldown and flash
+        if teleport_cooldown > 0:
+            teleport_cooldown -= 1
+        if teleport_flash > 0:
+            teleport_flash -= 1
+
+        # Earthquake timers
+        if earthquake_timer > 0:
+            earthquake_timer -= 1
+            # When earthquake ends, unstun NPCs and cars
+            if earthquake_timer <= 0:
+                for npc in npcs:
+                    if npc.npc_type != "rock":
+                        npc.speed = random.uniform(0.5, 1.5)
+                        npc.dir_timer = random.randint(30, 120)
+                for car in cars:
+                    if car.speed == 0.0:
+                        car.speed = random.uniform(1.2, 2.5)
+        if earthquake_cooldown > 0:
+            earthquake_cooldown -= 1
+        if earthquake_shake > 0:
+            earthquake_shake -= 1
 
         # --- MOVEMENT ---
         # Check which keys are currently held down
@@ -4416,14 +4584,24 @@ async def main():
                     interior_y = new_y
         else:
             # OUTSIDE - use world collision
-            if dx != 0:
+            # When bouncing, the burrb is in the air and can fly over buildings!
+            if bounce_timer > 0:
                 new_x = burrb_x + dx
-                if can_move_to(new_x, burrb_y):
-                    burrb_x = new_x
-            if dy != 0:
                 new_y = burrb_y + dy
-                if can_move_to(burrb_x, new_y):
-                    burrb_y = new_y
+                # Still clamp to world boundaries
+                new_x = max(20, min(WORLD_WIDTH - 20, new_x))
+                new_y = max(20, min(WORLD_HEIGHT - 20, new_y))
+                burrb_x = new_x
+                burrb_y = new_y
+            else:
+                if dx != 0:
+                    new_x = burrb_x + dx
+                    if can_move_to(new_x, burrb_y):
+                        burrb_x = new_x
+                if dy != 0:
+                    new_y = burrb_y + dy
+                    if can_move_to(burrb_x, new_y):
+                        burrb_y = new_y
 
         if is_walking:
             walk_frame += 1
@@ -4548,6 +4726,10 @@ async def main():
         target_cam_y = burrb_y - SCREEN_HEIGHT // 2
         cam_x += (target_cam_x - cam_x) * 0.08
         cam_y += (target_cam_y - cam_y) * 0.08
+        # Earthquake screen shake!
+        if earthquake_shake > 0:
+            cam_x += random.randint(-6, 6)
+            cam_y += random.randint(-6, 6)
 
         # --- DRAWING ---
         if inside_building is not None:
@@ -4785,6 +4967,28 @@ async def main():
                             )
                         screen.blit(ice_surf, (npc_sx - 10, npc_sy - 10))
 
+            # Bounce: draw a shadow on the ground when airborne!
+            if bounce_timer > 0:
+                shadow_sx = int(burrb_x - cam_x)
+                shadow_sy = int(burrb_y - cam_y)
+                shadow_w = int(
+                    16 * (1.0 - bounce_height / 120)
+                )  # shadow shrinks as you go up
+                shadow_h = max(2, shadow_w // 3)
+                shadow_surf = pygame.Surface(
+                    (shadow_w * 2, shadow_h * 2), pygame.SRCALPHA
+                )
+                shadow_alpha = int(80 * (1.0 - bounce_height / 120))
+                pygame.draw.ellipse(
+                    shadow_surf,
+                    (0, 0, 0, shadow_alpha),
+                    (0, 0, shadow_w * 2, shadow_h * 2),
+                )
+                screen.blit(shadow_surf, (shadow_sx - shadow_w, shadow_sy - shadow_h))
+
+            # Bounce height offset for drawing the burrb
+            bounce_y_offset = -bounce_height  # negative = up on screen
+
             # Draw the burrb (with Giant Mode and Invisibility effects!)
             if giant_scale > 1.05 or invisible_timer > 0:
                 # Draw to a temp surface so we can scale/alpha it
@@ -4811,14 +5015,60 @@ async def main():
                 # Invisibility = semi-transparent + blue tint
                 if invisible_timer > 0:
                     temp_surf.set_alpha(60)
-                # Blit at the correct world position
+                # Blit at the correct world position (with bounce offset!)
                 blit_x = int(burrb_x - cam_x - new_w // 2)
-                blit_y = int(burrb_y - cam_y - new_h // 2)
+                blit_y = int(burrb_y - cam_y - new_h // 2 + bounce_y_offset)
                 screen.blit(temp_surf, (blit_x, blit_y))
             else:
                 draw_burrb(
-                    screen, burrb_x, burrb_y, cam_x, cam_y, facing_left, walk_frame
+                    screen,
+                    burrb_x,
+                    burrb_y + bounce_y_offset,
+                    cam_x,
+                    cam_y,
+                    facing_left,
+                    walk_frame,
                 )
+
+            # Teleport flash effect!
+            if teleport_flash > 0:
+                flash_surf = pygame.Surface(
+                    (SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA
+                )
+                flash_alpha = int(200 * (teleport_flash / 15))
+                pygame.draw.circle(
+                    flash_surf,
+                    (100, 200, 255, flash_alpha),
+                    (int(burrb_x - cam_x), int(burrb_y - cam_y)),
+                    int(60 + (15 - teleport_flash) * 10),
+                )
+                screen.blit(flash_surf, (0, 0))
+
+            # Earthquake shockwave effect!
+            if earthquake_shake > 0:
+                eq_sx = int(burrb_x - cam_x)
+                eq_sy = int(burrb_y - cam_y)
+                # Expanding ring
+                ring_radius = int((30 - earthquake_shake) * 12)
+                ring_alpha = int(180 * (earthquake_shake / 30))
+                eq_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+                pygame.draw.circle(
+                    eq_surf,
+                    (200, 150, 50, ring_alpha),
+                    (eq_sx, eq_sy),
+                    ring_radius,
+                    max(3, 8 - (30 - earthquake_shake) // 4),
+                )
+                # Inner dust cloud
+                if earthquake_shake > 15:
+                    inner_r = ring_radius // 2
+                    pygame.draw.circle(
+                        eq_surf,
+                        (180, 160, 100, ring_alpha // 2),
+                        (eq_sx, eq_sy),
+                        inner_r,
+                    )
+                screen.blit(eq_surf, (0, 0))
 
             # Dash trail effect!
             if dash_active > 0:
@@ -4939,6 +5189,14 @@ async def main():
             active_abilities.append(("GIANT", (255, 140, 60), giant_timer, 480))
         if dash_active > 0:
             active_abilities.append(("DASH!", (255, 255, 100), dash_active, 12))
+        if bounce_timer > 0:
+            active_abilities.append(
+                ("BOUNCE!", (100, 255, 200), bounce_timer, BOUNCE_DURATION)
+            )
+        if earthquake_timer > 0:
+            active_abilities.append(
+                ("QUAKE!", (200, 150, 50), earthquake_timer, EARTHQUAKE_DURATION)
+            )
         # Show always-on abilities as small badges
         passive_badges = []
         if ability_unlocked[1]:  # Super Speed
