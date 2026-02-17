@@ -6,7 +6,7 @@ This is a pygame game built collaboratively between a 10-year-old kid and Claude
 
 ## Key Rules
 
-- **Git discipline**: Commit after every meaningful change with clear, descriptive messages. The git history should tell the full story of how this game was built.
+- **Git discipline**: Commit after every meaningful change with clear, descriptive messages. Always push to `origin` after committing. The git history should tell the full story of how this game was built.
 - **Single file**: The entire game lives in `game.py`. All edits are surgical (find-and-replace), never full rewrites.
 - **Kid-friendly**: The player is 10 and knows nothing about programming. Explain things simply when talking to them. Never ask them to write code.
 - **Dad reviews**: A parent oversees the project. Keep the git history clean and informative so he can follow along.
