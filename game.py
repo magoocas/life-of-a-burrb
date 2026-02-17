@@ -7,6 +7,7 @@ Use arrow keys or WASD to move around!
 import pygame
 import math
 import random
+import asyncio
 
 # Initialize pygame - this starts up the game engine
 pygame.init()
@@ -3891,650 +3892,767 @@ def draw_shop(surface):
     )
 
 
-# ============================================================
-# MAIN GAME LOOP
-# ============================================================
-# This is the heart of the game! It runs over and over, about
-# 60 times per second. Each time through the loop:
-#   1. Check what keys are pressed
-#   2. Move the burrb
-#   3. Move the camera
-#   4. Draw everything on screen
-running = True
 
-while running:
-    # --- EVENT HANDLING ---
-    # Events are things like key presses, mouse clicks, or
-    # clicking the X button to close the window
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_ESCAPE:
+async def main():
+    """Main game loop, async for Pygbag web support."""
+    global running, burrb_x, burrb_y, burrb_angle, facing_left
+    global walk_frame, is_walking, first_person
+    global shop_open, shop_cursor
+    global inside_building, interior_x, interior_y
+    global saved_outdoor_x, saved_outdoor_y, saved_outdoor_angle
+    global tongue_active, tongue_length, tongue_retracting
+    global tongue_angle, tongue_hit_npc
+    global chips_collected, ability_unlocked
+    global dash_cooldown, dash_active
+    global freeze_timer, invisible_timer, giant_timer, giant_scale
+    global jumpscare_timer, jumpscare_frame, closet_msg_timer
+    global cam_x, cam_y
+    global touch_active, touch_move_target, touch_held
+    global touch_pos, touch_start_pos, touch_finger_id, touch_btn_pressed
+
+    # ============================================================
+    # MAIN GAME LOOP
+    # ============================================================
+    # This is the heart of the game! It runs over and over, about
+    # 60 times per second. Each time through the loop:
+    #   1. Check what keys are pressed
+    #   2. Move the burrb
+    #   3. Move the camera
+    #   4. Draw everything on screen
+    running = True
+
+    while running:
+        # --- EVENT HANDLING ---
+        # Events are things like key presses, mouse clicks, or
+        # clicking the X button to close the window
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    if shop_open:
+                        shop_open = False
+                    else:
+                        running = False
+
+                # TAB opens/closes the chip shop!
+                if event.key == pygame.K_TAB:
+                    shop_open = not shop_open
+                    shop_cursor = 0
+
+                # When the shop is open, handle shop navigation
                 if shop_open:
-                    shop_open = False
-                else:
-                    running = False
+                    if event.key == pygame.K_UP:
+                        shop_cursor = (shop_cursor - 1) % len(ABILITIES)
+                    if event.key == pygame.K_DOWN:
+                        shop_cursor = (shop_cursor + 1) % len(ABILITIES)
+                    if event.key == pygame.K_RETURN:
+                        # Try to buy the selected ability!
+                        cost = ABILITIES[shop_cursor][1]
+                        if not ability_unlocked[shop_cursor] and chips_collected >= cost:
+                            chips_collected -= cost
+                            ability_unlocked[shop_cursor] = True
+                    # Skip all other game input when shop is open
+                    continue
 
-            # TAB opens/closes the chip shop!
-            if event.key == pygame.K_TAB:
-                shop_open = not shop_open
-                shop_cursor = 0
+                if event.key == pygame.K_SPACE:
+                    first_person = not first_person
 
-            # When the shop is open, handle shop navigation
-            if shop_open:
-                if event.key == pygame.K_UP:
-                    shop_cursor = (shop_cursor - 1) % len(ABILITIES)
-                if event.key == pygame.K_DOWN:
-                    shop_cursor = (shop_cursor + 1) % len(ABILITIES)
-                if event.key == pygame.K_RETURN:
-                    # Try to buy the selected ability!
-                    cost = ABILITIES[shop_cursor][1]
-                    if not ability_unlocked[shop_cursor] and chips_collected >= cost:
-                        chips_collected -= cost
-                        ability_unlocked[shop_cursor] = True
-                # Skip all other game input when shop is open
-                continue
-
-            if event.key == pygame.K_SPACE:
-                first_person = not first_person
-
-            # Press O to shoot the tongue!
-            if event.key == pygame.K_o:
-                if not tongue_active and inside_building is None:
-                    tongue_active = True
-                    tongue_length = 0.0
-                    tongue_retracting = False
-                    tongue_hit_npc = None
-                    # Tongue shoots in the direction the burrb is facing
-                    if first_person:
-                        tongue_angle = burrb_angle
-                    else:
-                        if facing_left:
-                            tongue_angle = math.pi  # left
-                        else:
-                            tongue_angle = 0.0  # right
-
-            # Press E to enter/exit buildings!
-            if event.key == pygame.K_e:
-                if inside_building is None:
-                    # Try to enter a building (check if near a door)
-                    nearby = get_nearby_door_building(burrb_x, burrb_y)
-                    if nearby is not None:
-                        inside_building = nearby
-                        # Save outdoor position so we can come back
-                        saved_outdoor_x = burrb_x
-                        saved_outdoor_y = burrb_y
-                        saved_outdoor_angle = burrb_angle
-                        # Move burrb to interior spawn point
-                        interior_x = float(nearby.spawn_x)
-                        interior_y = float(nearby.spawn_y)
-                        burrb_angle = math.pi * 1.5  # face upward (into the room)
-                        touch_move_target = None  # clear touch target
-                else:
-                    # Try to open the closet!
-                    bld = inside_building
-                    if (
-                        not bld.closet_opened
-                        and bld.closet_x > 0
-                        and jumpscare_timer <= 0
-                    ):
-                        cl_dx = interior_x - bld.closet_x
-                        cl_dy = interior_y - bld.closet_y
-                        cl_dist = math.sqrt(cl_dx * cl_dx + cl_dy * cl_dy)
-                        if cl_dist < 30:  # close enough to open!
-                            bld.closet_opened = True
-                            # 10% chance of jump scare, 90% chance of 2 chips!
-                            if random.random() < 0.1:
-                                # JUMP SCARE!
-                                bld.closet_jumpscare = True
-                                jumpscare_timer = JUMPSCARE_DURATION
-                                jumpscare_frame = 0
-                            else:
-                                # Found 2 chips!
-                                chips_collected += 2
-                                closet_msg_timer = 120  # show message for 2 sec
-
-                    # Try to steal the chips! (check if near the chip bag)
-                    if not bld.chips_stolen and bld.chips_x > 0:
-                        chip_dx = interior_x - bld.chips_x
-                        chip_dy = interior_y - bld.chips_y
-                        chip_dist = math.sqrt(chip_dx * chip_dx + chip_dy * chip_dy)
-                        if chip_dist < 30:  # close enough to grab!
-                            bld.chips_stolen = True
-                            bld.resident_angry = True  # uh oh!
-                            chips_collected += 1
-
-                    # Try to exit the building (check if near interior door)
-                    if is_at_interior_door(inside_building, interior_x, interior_y):
-                        # Put burrb back outside, just below the door
-                        burrb_x = saved_outdoor_x
-                        burrb_y = saved_outdoor_y
-                        burrb_angle = saved_outdoor_angle
-                        inside_building = None
-                        touch_move_target = None  # clear touch target
-
-            # --- ABILITY ACTIVATION KEYS ---
-
-            # Press F to FREEZE all nearby burrbs!
-            if event.key == pygame.K_f:
-                if ability_unlocked[3] and freeze_timer <= 0:
-                    freeze_timer = 300  # 5 seconds at 60fps
-
-            # Press I to become INVISIBLE!
-            if event.key == pygame.K_i:
-                if ability_unlocked[4] and invisible_timer <= 0:
-                    invisible_timer = 300  # 5 seconds
-
-            # Press G to become GIANT!
-            if event.key == pygame.K_g:
-                if ability_unlocked[5] and giant_timer <= 0:
-                    giant_timer = 480  # 8 seconds
-
-        # === TOUCH / MOUSE INPUT ===
-        # Handle finger touch events (phones/tablets) AND mouse clicks
-        # (touchscreen laptops report mouse events for touch)
-        if event.type == pygame.FINGERDOWN:
-            touch_active = True
-            tx = int(event.x * SCREEN_WIDTH)
-            ty = int(event.y * SCREEN_HEIGHT)
-            touch_held = True
-            touch_pos = (tx, ty)
-            touch_start_pos = (tx, ty)
-            touch_finger_id = event.finger_id
-
-            # Check if a button was pressed
-            btn = touch_hit_button(tx, ty)
-            if btn is not None:
-                touch_btn_pressed = btn
-            else:
-                touch_btn_pressed = None
-                # Tap to move! Convert screen position to world/interior position
-                if not shop_open:
-                    if inside_building is not None:
-                        # Inside a building: figure out interior coords from screen
-                        bld = inside_building
-                        tile = bld.interior_tile
+                # Press O to shoot the tongue!
+                if event.key == pygame.K_o:
+                    if not tongue_active and inside_building is None:
+                        tongue_active = True
+                        tongue_length = 0.0
+                        tongue_retracting = False
+                        tongue_hit_npc = None
+                        # Tongue shoots in the direction the burrb is facing
                         if first_person:
-                            # In first-person interior, tapping doesn't set move target
-                            pass
+                            tongue_angle = burrb_angle
                         else:
-                            # Top-down interior: screen is centered on burrb
-                            icam_x = interior_x - SCREEN_WIDTH // 2
-                            icam_y = interior_y - SCREEN_HEIGHT // 2
-                            touch_move_target = (tx + icam_x, ty + icam_y)
-                    elif first_person:
-                        # First person outdoor: tap left/right to turn, upper to walk
-                        pass  # handled in FINGERMOTION / held check
+                            if facing_left:
+                                tongue_angle = math.pi  # left
+                            else:
+                                tongue_angle = 0.0  # right
+
+                # Press E to enter/exit buildings!
+                if event.key == pygame.K_e:
+                    if inside_building is None:
+                        # Try to enter a building (check if near a door)
+                        nearby = get_nearby_door_building(burrb_x, burrb_y)
+                        if nearby is not None:
+                            inside_building = nearby
+                            # Save outdoor position so we can come back
+                            saved_outdoor_x = burrb_x
+                            saved_outdoor_y = burrb_y
+                            saved_outdoor_angle = burrb_angle
+                            # Move burrb to interior spawn point
+                            interior_x = float(nearby.spawn_x)
+                            interior_y = float(nearby.spawn_y)
+                            burrb_angle = math.pi * 1.5  # face upward (into the room)
+                            touch_move_target = None  # clear touch target
                     else:
-                        # Top-down outdoor: convert screen coords to world coords
-                        touch_move_target = (tx + cam_x, ty + cam_y)
+                        # Try to open the closet!
+                        bld = inside_building
+                        if (
+                            not bld.closet_opened
+                            and bld.closet_x > 0
+                            and jumpscare_timer <= 0
+                        ):
+                            cl_dx = interior_x - bld.closet_x
+                            cl_dy = interior_y - bld.closet_y
+                            cl_dist = math.sqrt(cl_dx * cl_dx + cl_dy * cl_dy)
+                            if cl_dist < 30:  # close enough to open!
+                                bld.closet_opened = True
+                                # 10% chance of jump scare, 90% chance of 2 chips!
+                                if random.random() < 0.1:
+                                    # JUMP SCARE!
+                                    bld.closet_jumpscare = True
+                                    jumpscare_timer = JUMPSCARE_DURATION
+                                    jumpscare_frame = 0
+                                else:
+                                    # Found 2 chips!
+                                    chips_collected += 2
+                                    closet_msg_timer = 120  # show message for 2 sec
 
-        if event.type == pygame.FINGERMOTION:
-            if event.finger_id == touch_finger_id:
+                        # Try to steal the chips! (check if near the chip bag)
+                        if not bld.chips_stolen and bld.chips_x > 0:
+                            chip_dx = interior_x - bld.chips_x
+                            chip_dy = interior_y - bld.chips_y
+                            chip_dist = math.sqrt(chip_dx * chip_dx + chip_dy * chip_dy)
+                            if chip_dist < 30:  # close enough to grab!
+                                bld.chips_stolen = True
+                                bld.resident_angry = True  # uh oh!
+                                chips_collected += 1
+
+                        # Try to exit the building (check if near interior door)
+                        if is_at_interior_door(inside_building, interior_x, interior_y):
+                            # Put burrb back outside, just below the door
+                            burrb_x = saved_outdoor_x
+                            burrb_y = saved_outdoor_y
+                            burrb_angle = saved_outdoor_angle
+                            inside_building = None
+                            touch_move_target = None  # clear touch target
+
+                # --- ABILITY ACTIVATION KEYS ---
+
+                # Press F to FREEZE all nearby burrbs!
+                if event.key == pygame.K_f:
+                    if ability_unlocked[3] and freeze_timer <= 0:
+                        freeze_timer = 300  # 5 seconds at 60fps
+
+                # Press I to become INVISIBLE!
+                if event.key == pygame.K_i:
+                    if ability_unlocked[4] and invisible_timer <= 0:
+                        invisible_timer = 300  # 5 seconds
+
+                # Press G to become GIANT!
+                if event.key == pygame.K_g:
+                    if ability_unlocked[5] and giant_timer <= 0:
+                        giant_timer = 480  # 8 seconds
+
+            # === TOUCH / MOUSE INPUT ===
+            # Handle finger touch events (phones/tablets) AND mouse clicks
+            # (touchscreen laptops report mouse events for touch)
+            if event.type == pygame.FINGERDOWN:
+                touch_active = True
                 tx = int(event.x * SCREEN_WIDTH)
                 ty = int(event.y * SCREEN_HEIGHT)
+                touch_held = True
                 touch_pos = (tx, ty)
+                touch_start_pos = (tx, ty)
+                touch_finger_id = event.finger_id
 
-        if event.type == pygame.FINGERUP:
-            if event.finger_id == touch_finger_id:
-                tx = int(event.x * SCREEN_WIDTH)
-                ty = int(event.y * SCREEN_HEIGHT)
+                # Check if a button was pressed
+                btn = touch_hit_button(tx, ty)
+                if btn is not None:
+                    touch_btn_pressed = btn
+                else:
+                    touch_btn_pressed = None
+                    # Tap to move! Convert screen position to world/interior position
+                    if not shop_open:
+                        if inside_building is not None:
+                            # Inside a building: figure out interior coords from screen
+                            bld = inside_building
+                            tile = bld.interior_tile
+                            if first_person:
+                                # In first-person interior, tapping doesn't set move target
+                                pass
+                            else:
+                                # Top-down interior: screen is centered on burrb
+                                icam_x = interior_x - SCREEN_WIDTH // 2
+                                icam_y = interior_y - SCREEN_HEIGHT // 2
+                                touch_move_target = (tx + icam_x, ty + icam_y)
+                        elif first_person:
+                            # First person outdoor: tap left/right to turn, upper to walk
+                            pass  # handled in FINGERMOTION / held check
+                        else:
+                            # Top-down outdoor: convert screen coords to world coords
+                            touch_move_target = (tx + cam_x, ty + cam_y)
 
-                # If a button was pressed, trigger its action on release
+            if event.type == pygame.FINGERMOTION:
+                if event.finger_id == touch_finger_id:
+                    tx = int(event.x * SCREEN_WIDTH)
+                    ty = int(event.y * SCREEN_HEIGHT)
+                    touch_pos = (tx, ty)
+
+            if event.type == pygame.FINGERUP:
+                if event.finger_id == touch_finger_id:
+                    tx = int(event.x * SCREEN_WIDTH)
+                    ty = int(event.y * SCREEN_HEIGHT)
+
+                    # If a button was pressed, trigger its action on release
+                    if touch_btn_pressed is not None:
+                        btn = touch_hit_button(tx, ty)
+                        if btn == touch_btn_pressed:
+                            # Trigger the button action!
+                            if btn == "action_e":
+                                # Simulate pressing E
+                                fake_event = pygame.event.Event(
+                                    pygame.KEYDOWN, key=pygame.K_e
+                                )
+                                pygame.event.post(fake_event)
+                            elif btn == "action_o":
+                                fake_event = pygame.event.Event(
+                                    pygame.KEYDOWN, key=pygame.K_o
+                                )
+                                pygame.event.post(fake_event)
+                            elif btn == "toggle_view":
+                                fake_event = pygame.event.Event(
+                                    pygame.KEYDOWN, key=pygame.K_SPACE
+                                )
+                                pygame.event.post(fake_event)
+                            elif btn == "toggle_shop":
+                                fake_event = pygame.event.Event(
+                                    pygame.KEYDOWN, key=pygame.K_TAB
+                                )
+                                pygame.event.post(fake_event)
+                            elif btn == "ability_f":
+                                fake_event = pygame.event.Event(
+                                    pygame.KEYDOWN, key=pygame.K_f
+                                )
+                                pygame.event.post(fake_event)
+                            elif btn == "ability_i":
+                                fake_event = pygame.event.Event(
+                                    pygame.KEYDOWN, key=pygame.K_i
+                                )
+                                pygame.event.post(fake_event)
+                            elif btn == "ability_g":
+                                fake_event = pygame.event.Event(
+                                    pygame.KEYDOWN, key=pygame.K_g
+                                )
+                                pygame.event.post(fake_event)
+
+                    touch_held = False
+                    touch_btn_pressed = None
+                    touch_finger_id = None
+
+            # Also handle mouse clicks as touch (for touchscreen laptops)
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                touch_active = True
+                tx, ty = event.pos
+                touch_held = True
+                touch_pos = (tx, ty)
+                touch_start_pos = (tx, ty)
+
+                btn = touch_hit_button(tx, ty)
+                if btn is not None:
+                    touch_btn_pressed = btn
+                else:
+                    touch_btn_pressed = None
+                    if not shop_open:
+                        if inside_building is not None:
+                            if not first_person:
+                                icam_x = interior_x - SCREEN_WIDTH // 2
+                                icam_y = interior_y - SCREEN_HEIGHT // 2
+                                touch_move_target = (tx + icam_x, ty + icam_y)
+                        elif not first_person:
+                            touch_move_target = (tx + cam_x, ty + cam_y)
+
+            if event.type == pygame.MOUSEMOTION and touch_held:
+                touch_pos = event.pos
+
+            if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                tx, ty = event.pos
                 if touch_btn_pressed is not None:
                     btn = touch_hit_button(tx, ty)
                     if btn == touch_btn_pressed:
-                        # Trigger the button action!
                         if btn == "action_e":
-                            # Simulate pressing E
-                            fake_event = pygame.event.Event(
-                                pygame.KEYDOWN, key=pygame.K_e
+                            pygame.event.post(
+                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_e)
                             )
-                            pygame.event.post(fake_event)
                         elif btn == "action_o":
-                            fake_event = pygame.event.Event(
-                                pygame.KEYDOWN, key=pygame.K_o
+                            pygame.event.post(
+                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_o)
                             )
-                            pygame.event.post(fake_event)
                         elif btn == "toggle_view":
-                            fake_event = pygame.event.Event(
-                                pygame.KEYDOWN, key=pygame.K_SPACE
+                            pygame.event.post(
+                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE)
                             )
-                            pygame.event.post(fake_event)
                         elif btn == "toggle_shop":
-                            fake_event = pygame.event.Event(
-                                pygame.KEYDOWN, key=pygame.K_TAB
+                            pygame.event.post(
+                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_TAB)
                             )
-                            pygame.event.post(fake_event)
                         elif btn == "ability_f":
-                            fake_event = pygame.event.Event(
-                                pygame.KEYDOWN, key=pygame.K_f
+                            pygame.event.post(
+                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_f)
                             )
-                            pygame.event.post(fake_event)
                         elif btn == "ability_i":
-                            fake_event = pygame.event.Event(
-                                pygame.KEYDOWN, key=pygame.K_i
+                            pygame.event.post(
+                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_i)
                             )
-                            pygame.event.post(fake_event)
                         elif btn == "ability_g":
-                            fake_event = pygame.event.Event(
-                                pygame.KEYDOWN, key=pygame.K_g
+                            pygame.event.post(
+                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_g)
                             )
-                            pygame.event.post(fake_event)
-
                 touch_held = False
                 touch_btn_pressed = None
-                touch_finger_id = None
 
-        # Also handle mouse clicks as touch (for touchscreen laptops)
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            touch_active = True
-            tx, ty = event.pos
-            touch_held = True
-            touch_pos = (tx, ty)
-            touch_start_pos = (tx, ty)
+        # Handle touch input for the shop (tap abilities to select/buy)
+        if shop_open and touch_active and touch_held:
+            tx, ty = touch_pos
+            box_w = 500
+            box_h = 420
+            box_x = (SCREEN_WIDTH - box_w) // 2
+            box_y = (SCREEN_HEIGHT - box_h) // 2
+            # Check if tap is inside the shop box
+            if box_x <= tx <= box_x + box_w:
+                for i in range(len(ABILITIES)):
+                    row_y = box_y + 90 + i * 52
+                    if row_y - 4 <= ty <= row_y + 48:
+                        if shop_cursor == i:
+                            # Already selected - try to buy!
+                            cost = ABILITIES[i][1]
+                            if not ability_unlocked[i] and chips_collected >= cost:
+                                chips_collected -= cost
+                                ability_unlocked[i] = True
+                        else:
+                            shop_cursor = i
+                        touch_held = False  # prevent repeated taps
+                        break
 
-            btn = touch_hit_button(tx, ty)
-            if btn is not None:
-                touch_btn_pressed = btn
-            else:
-                touch_btn_pressed = None
-                if not shop_open:
-                    if inside_building is not None:
-                        if not first_person:
-                            icam_x = interior_x - SCREEN_WIDTH // 2
-                            icam_y = interior_y - SCREEN_HEIGHT // 2
-                            touch_move_target = (tx + icam_x, ty + icam_y)
-                    elif not first_person:
-                        touch_move_target = (tx + cam_x, ty + cam_y)
+        # Skip movement and updates when shop is open (game is paused)
+        if shop_open:
+            draw_shop(screen)
+            if touch_active:
+                draw_touch_buttons(screen)
+            pygame.display.flip()
+            clock.tick(FPS)
+            await asyncio.sleep(0)
+            continue
 
-        if event.type == pygame.MOUSEMOTION and touch_held:
-            touch_pos = event.pos
+        # --- ABILITY TIMERS ---
+        # Count down all active ability timers each frame
+        if dash_cooldown > 0:
+            dash_cooldown -= 1
+        if dash_active > 0:
+            dash_active -= 1
+        if freeze_timer > 0:
+            freeze_timer -= 1
+        if invisible_timer > 0:
+            invisible_timer -= 1
+        if giant_timer > 0:
+            giant_timer -= 1
+        if jumpscare_timer > 0:
+            jumpscare_timer -= 1
+            jumpscare_frame += 1
+        if closet_msg_timer > 0:
+            closet_msg_timer -= 1
+        # Smoothly grow/shrink for giant mode
+        target_giant = 2.5 if giant_timer > 0 else 1.0
+        giant_scale += (target_giant - giant_scale) * 0.15
 
-        if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-            tx, ty = event.pos
-            if touch_btn_pressed is not None:
-                btn = touch_hit_button(tx, ty)
-                if btn == touch_btn_pressed:
-                    if btn == "action_e":
-                        pygame.event.post(
-                            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_e)
-                        )
-                    elif btn == "action_o":
-                        pygame.event.post(
-                            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_o)
-                        )
-                    elif btn == "toggle_view":
-                        pygame.event.post(
-                            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE)
-                        )
-                    elif btn == "toggle_shop":
-                        pygame.event.post(
-                            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_TAB)
-                        )
-                    elif btn == "ability_f":
-                        pygame.event.post(
-                            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_f)
-                        )
-                    elif btn == "ability_i":
-                        pygame.event.post(
-                            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_i)
-                        )
-                    elif btn == "ability_g":
-                        pygame.event.post(
-                            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_g)
-                        )
-            touch_held = False
-            touch_btn_pressed = None
+        # --- MOVEMENT ---
+        # Check which keys are currently held down
+        keys = pygame.key.get_pressed()
+        dx = 0
+        dy = 0
 
-    # Handle touch input for the shop (tap abilities to select/buy)
-    if shop_open and touch_active and touch_held:
-        tx, ty = touch_pos
-        box_w = 500
-        box_h = 420
-        box_x = (SCREEN_WIDTH - box_w) // 2
-        box_y = (SCREEN_HEIGHT - box_h) // 2
-        # Check if tap is inside the shop box
-        if box_x <= tx <= box_x + box_w:
-            for i in range(len(ABILITIES)):
-                row_y = box_y + 90 + i * 52
-                if row_y - 4 <= ty <= row_y + 48:
-                    if shop_cursor == i:
-                        # Already selected - try to buy!
-                        cost = ABILITIES[i][1]
-                        if not ability_unlocked[i] and chips_collected >= cost:
-                            chips_collected -= cost
-                            ability_unlocked[i] = True
-                    else:
-                        shop_cursor = i
-                    touch_held = False  # prevent repeated taps
-                    break
+        # Calculate speed multiplier from abilities!
+        speed_mult = 1.0
+        # Super Speed: hold SHIFT to go fast (ability index 1)
+        if ability_unlocked[1] and keys[pygame.K_LSHIFT]:
+            speed_mult = 2.2
+        # Dash: press SHIFT for a burst (ability index 0)
+        # Dash activates when SHIFT is pressed and we have the dash ability
+        if ability_unlocked[0] and not ability_unlocked[1]:
+            # Only dash if super speed is NOT unlocked (otherwise SHIFT = super speed)
+            if keys[pygame.K_LSHIFT] and dash_cooldown <= 0 and dash_active <= 0:
+                dash_active = 12  # 12 frames of dash burst
+                dash_cooldown = 45  # cooldown before next dash
+        # If BOTH dash and super speed are unlocked, SHIFT = super speed,
+        # and dash triggers automatically when you start running fast
+        if ability_unlocked[0] and ability_unlocked[1]:
+            if keys[pygame.K_LSHIFT] and dash_cooldown <= 0 and dash_active <= 0:
+                dash_active = 12
+                dash_cooldown = 45
+        if dash_active > 0:
+            speed_mult = max(speed_mult, 4.0)  # dash is faster than super speed
+        # Giant mode makes you a little slower (you're big!)
+        if giant_timer > 0:
+            speed_mult *= 0.8
+        current_speed = burrb_speed * speed_mult
 
-    # Skip movement and updates when shop is open (game is paused)
-    if shop_open:
-        draw_shop(screen)
-        if touch_active:
-            draw_touch_buttons(screen)
-        pygame.display.flip()
-        clock.tick(FPS)
-        continue
-
-    # --- ABILITY TIMERS ---
-    # Count down all active ability timers each frame
-    if dash_cooldown > 0:
-        dash_cooldown -= 1
-    if dash_active > 0:
-        dash_active -= 1
-    if freeze_timer > 0:
-        freeze_timer -= 1
-    if invisible_timer > 0:
-        invisible_timer -= 1
-    if giant_timer > 0:
-        giant_timer -= 1
-    if jumpscare_timer > 0:
-        jumpscare_timer -= 1
-        jumpscare_frame += 1
-    if closet_msg_timer > 0:
-        closet_msg_timer -= 1
-    # Smoothly grow/shrink for giant mode
-    target_giant = 2.5 if giant_timer > 0 else 1.0
-    giant_scale += (target_giant - giant_scale) * 0.15
-
-    # --- MOVEMENT ---
-    # Check which keys are currently held down
-    keys = pygame.key.get_pressed()
-    dx = 0
-    dy = 0
-
-    # Calculate speed multiplier from abilities!
-    speed_mult = 1.0
-    # Super Speed: hold SHIFT to go fast (ability index 1)
-    if ability_unlocked[1] and keys[pygame.K_LSHIFT]:
-        speed_mult = 2.2
-    # Dash: press SHIFT for a burst (ability index 0)
-    # Dash activates when SHIFT is pressed and we have the dash ability
-    if ability_unlocked[0] and not ability_unlocked[1]:
-        # Only dash if super speed is NOT unlocked (otherwise SHIFT = super speed)
-        if keys[pygame.K_LSHIFT] and dash_cooldown <= 0 and dash_active <= 0:
-            dash_active = 12  # 12 frames of dash burst
-            dash_cooldown = 45  # cooldown before next dash
-    # If BOTH dash and super speed are unlocked, SHIFT = super speed,
-    # and dash triggers automatically when you start running fast
-    if ability_unlocked[0] and ability_unlocked[1]:
-        if keys[pygame.K_LSHIFT] and dash_cooldown <= 0 and dash_active <= 0:
-            dash_active = 12
-            dash_cooldown = 45
-    if dash_active > 0:
-        speed_mult = max(speed_mult, 4.0)  # dash is faster than super speed
-    # Giant mode makes you a little slower (you're big!)
-    if giant_timer > 0:
-        speed_mult *= 0.8
-    current_speed = burrb_speed * speed_mult
-
-    # Cancel touch movement if keyboard is used
-    if any(
-        keys[k]
-        for k in (
-            pygame.K_LEFT,
-            pygame.K_RIGHT,
-            pygame.K_UP,
-            pygame.K_DOWN,
-            pygame.K_a,
-            pygame.K_d,
-            pygame.K_w,
-            pygame.K_s,
-        )
-    ):
-        touch_move_target = None
-
-    if first_person:
-        # FIRST PERSON CONTROLS:
-        # Left/Right (or A/D) = TURN (rotate which way you're looking)
-        # Up/Down (or W/S) = WALK forward/backward in the direction you face
-        if keys[pygame.K_LEFT] or keys[pygame.K_a]:
-            burrb_angle -= turn_speed
-        if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
-            burrb_angle += turn_speed
-
-        # Forward/backward movement uses the angle to figure out
-        # which direction to actually move in the world.
-        # cos(angle) gives the X component, sin(angle) gives the Y component.
-        if keys[pygame.K_UP] or keys[pygame.K_w]:
-            dx = math.cos(burrb_angle) * current_speed
-            dy = math.sin(burrb_angle) * current_speed
-        if keys[pygame.K_DOWN] or keys[pygame.K_s]:
-            dx = -math.cos(burrb_angle) * current_speed
-            dy = -math.sin(burrb_angle) * current_speed
-
-        # Keep angle in the range 0 to 2*pi (a full circle)
-        burrb_angle = burrb_angle % (2 * math.pi)
-
-        # Update facing_left for when we switch back to top-down
-        facing_left = math.pi / 2 < burrb_angle < 3 * math.pi / 2
-    else:
-        # TOP-DOWN CONTROLS (the original controls):
-        # Arrow keys / WASD move in that direction directly
-        if keys[pygame.K_LEFT] or keys[pygame.K_a]:
-            dx = -current_speed
-            facing_left = True
-        if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
-            dx = current_speed
-            facing_left = False
-        if keys[pygame.K_UP] or keys[pygame.K_w]:
-            dy = -current_speed
-        if keys[pygame.K_DOWN] or keys[pygame.K_s]:
-            dy = current_speed
-
-        # Diagonal movement shouldn't be faster
-        if dx != 0 and dy != 0:
-            dx *= 0.707
-            dy *= 0.707
-
-        # Update the angle to match movement direction, so when you
-        # switch to first person you're already looking the right way
-        if dx != 0 or dy != 0:
-            burrb_angle = math.atan2(dy, dx)
-
-    # --- TOUCH MOVEMENT ---
-    # If no keyboard input and we have a touch move target, walk toward it!
-    if dx == 0 and dy == 0 and touch_move_target is not None and touch_active:
-        target_x, target_y = touch_move_target
-        if inside_building is not None:
-            # Moving inside a building
-            tmx = target_x - interior_x
-            tmy = target_y - interior_y
-        else:
-            # Moving outside
-            tmx = target_x - burrb_x
-            tmy = target_y - burrb_y
-        touch_dist = math.sqrt(tmx * tmx + tmy * tmy)
-        if touch_dist > 8:  # not close enough yet, keep walking
-            # Normalize and apply speed
-            dx = (tmx / touch_dist) * current_speed
-            dy = (tmy / touch_dist) * current_speed
-            # Update facing direction
-            if not first_person:
-                facing_left = dx < 0
-                burrb_angle = math.atan2(dy, dx)
-            else:
-                burrb_angle = math.atan2(tmy, tmx)
-        else:
-            # Arrived at target!
+        # Cancel touch movement if keyboard is used
+        if any(
+            keys[k]
+            for k in (
+                pygame.K_LEFT,
+                pygame.K_RIGHT,
+                pygame.K_UP,
+                pygame.K_DOWN,
+                pygame.K_a,
+                pygame.K_d,
+                pygame.K_w,
+                pygame.K_s,
+            )
+        ):
             touch_move_target = None
 
-    # First-person touch: swipe to turn, hold upper screen to walk forward
-    if touch_active and touch_held and first_person and touch_btn_pressed is None:
-        tx, ty = touch_pos
-        sx, sy = touch_start_pos
-        # Horizontal swipe = turning
-        swipe_dx = tx - sx
-        if abs(swipe_dx) > 5:
-            burrb_angle += swipe_dx * 0.003
-            burrb_angle = burrb_angle % (2 * math.pi)
-            facing_left = math.pi / 2 < burrb_angle < 3 * math.pi / 2
-        # Tap in upper half of screen = walk forward
-        if ty < SCREEN_HEIGHT * 0.5:
-            dx = math.cos(burrb_angle) * current_speed
-            dy = math.sin(burrb_angle) * current_speed
-
-    # Try to move (check collisions) - works the same in both modes!
-    is_walking = dx != 0 or dy != 0
-
-    if inside_building is not None:
-        # INSIDE A BUILDING - use interior collision
-        if dx != 0:
-            new_x = interior_x + dx
-            if can_move_interior(inside_building, new_x, interior_y):
-                interior_x = new_x
-        if dy != 0:
-            new_y = interior_y + dy
-            if can_move_interior(inside_building, interior_x, new_y):
-                interior_y = new_y
-    else:
-        # OUTSIDE - use world collision
-        if dx != 0:
-            new_x = burrb_x + dx
-            if can_move_to(new_x, burrb_y):
-                burrb_x = new_x
-        if dy != 0:
-            new_y = burrb_y + dy
-            if can_move_to(burrb_x, new_y):
-                burrb_y = new_y
-
-    if is_walking:
-        walk_frame += 1
-    else:
-        walk_frame = 0
-
-    # --- UPDATE RESIDENT BURRB (angry chase!) ---
-    # If we're inside a building and the resident is angry (we stole chips!),
-    # the resident chases us around the room!
-    # BUT if we're invisible, they can't see us - they just wander confused!
-    if inside_building is not None and inside_building.resident_angry:
-        bld = inside_building
-        if invisible_timer > 0:
-            # Can't see us! Wander randomly
-            rand_angle = math.sin(bld.resident_walk_frame * 0.05) * 0.8
-            chase_dx = math.cos(rand_angle) * bld.resident_speed * 0.5
-            chase_dy = math.sin(rand_angle) * bld.resident_speed * 0.5
-            new_rx = bld.resident_x + chase_dx
-            new_ry = bld.resident_y + chase_dy
-            if can_move_interior(bld, new_rx, bld.resident_y):
-                bld.resident_x = new_rx
-            if can_move_interior(bld, bld.resident_x, new_ry):
-                bld.resident_y = new_ry
-            bld.resident_walk_frame += 1
-        else:
-            pass  # (chase logic continues below)
-    if (
-        inside_building is not None
-        and inside_building.resident_angry
-        and invisible_timer <= 0
-    ):
-        bld = inside_building
-        # Move resident toward the player
-        chase_dx = interior_x - bld.resident_x
-        chase_dy = interior_y - bld.resident_y
-        chase_dist = math.sqrt(chase_dx * chase_dx + chase_dy * chase_dy)
-        if chase_dist > 0:
-            # Normalize and move at resident speed
-            move_x = (chase_dx / chase_dist) * bld.resident_speed
-            move_y = (chase_dy / chase_dist) * bld.resident_speed
-            # Try to move (respect interior walls!)
-            new_rx = bld.resident_x + move_x
-            new_ry = bld.resident_y + move_y
-            if can_move_interior(bld, new_rx, bld.resident_y):
-                bld.resident_x = new_rx
-            if can_move_interior(bld, bld.resident_x, new_ry):
-                bld.resident_y = new_ry
-            bld.resident_walk_frame += 1
-
-        # Did the resident catch the player? Push them back!
-        catch_dx = interior_x - bld.resident_x
-        catch_dy = interior_y - bld.resident_y
-        catch_dist = math.sqrt(catch_dx * catch_dx + catch_dy * catch_dy)
-        if catch_dist < 14:  # caught!
-            # Push the player away from the resident
-            if catch_dist > 0:
-                push_x = (catch_dx / catch_dist) * 8
-                push_y = (catch_dy / catch_dist) * 8
-                new_px = interior_x + push_x
-                new_py = interior_y + push_y
-                if can_move_interior(bld, new_px, interior_y):
-                    interior_x = new_px
-                if can_move_interior(bld, interior_x, new_py):
-                    interior_y = new_py
-
-    # --- UPDATE NPCs ---
-    # Every frame, each NPC takes a step and maybe changes direction
-    # UNLESS they're frozen by the Freeze ability!
-    if freeze_timer <= 0:
-        for npc in npcs:
-            npc.update()
-    # (When frozen, NPCs just stand perfectly still - like statues!)
-
-    # --- UPDATE CARS ---
-    # Cars drive along roads every frame
-    if inside_building is None:
-        for car in cars:
-            car.update()
-
-    # --- UPDATE TONGUE ---
-    # The tongue extends outward, checks if it hits any NPC,
-    # then retracts back. If it hits an NPC, that NPC turns to stone!
-    # Mega Tongue ability doubles the range!
-    effective_tongue_max = tongue_max_length * (2.0 if ability_unlocked[2] else 1.0)
-    if tongue_active:
-        if not tongue_retracting:
-            # Tongue is shooting outward
-            tongue_length += tongue_speed
-            if tongue_length >= effective_tongue_max:
-                # Reached max length, start pulling back
-                tongue_retracting = True
-
-            # Check if tongue tip hit any NPC!
-            tip_x = burrb_x + math.cos(tongue_angle) * tongue_length
-            tip_y = burrb_y + math.sin(tongue_angle) * tongue_length
-            for npc in npcs:
-                if npc.npc_type == "rock":
-                    continue  # already a rock, skip
-                ddx = npc.x - tip_x
-                ddy = npc.y - tip_y
-                hit_dist = math.sqrt(ddx * ddx + ddy * ddy)
-                if hit_dist < 16:  # close enough = hit!
-                    # PETRIFY! Turn this NPC into a rock!
-                    npc.npc_type = "rock"
-                    npc.color = (120, 120, 110)  # gray rock color
-                    npc.detail_color = (90, 90, 80)  # darker gray
-                    npc.speed = 0  # rocks don't move
-                    tongue_hit_npc = npc
-                    tongue_retracting = True  # tongue snaps back
-                    break
-        else:
-            # Tongue is retracting
-            tongue_length -= tongue_speed * 1.5  # retract faster
-            if tongue_length <= 0:
-                tongue_length = 0
-                tongue_active = False
-                tongue_hit_npc = None
-
-    # --- CAMERA ---
-    # Smoothly follow the burrb (the camera "lerps" toward the burrb)
-    target_cam_x = burrb_x - SCREEN_WIDTH // 2
-    target_cam_y = burrb_y - SCREEN_HEIGHT // 2
-    cam_x += (target_cam_x - cam_x) * 0.08
-    cam_y += (target_cam_y - cam_y) * 0.08
-
-    # --- DRAWING ---
-    if inside_building is not None:
-        # ========== INSIDE A BUILDING ==========
         if first_person:
-            # First person inside the building
-            draw_interior_first_person(
-                screen, inside_building, interior_x, interior_y, burrb_angle
-            )
-            # Beak at bottom
+            # FIRST PERSON CONTROLS:
+            # Left/Right (or A/D) = TURN (rotate which way you're looking)
+            # Up/Down (or W/S) = WALK forward/backward in the direction you face
+            if keys[pygame.K_LEFT] or keys[pygame.K_a]:
+                burrb_angle -= turn_speed
+            if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+                burrb_angle += turn_speed
+
+            # Forward/backward movement uses the angle to figure out
+            # which direction to actually move in the world.
+            # cos(angle) gives the X component, sin(angle) gives the Y component.
+            if keys[pygame.K_UP] or keys[pygame.K_w]:
+                dx = math.cos(burrb_angle) * current_speed
+                dy = math.sin(burrb_angle) * current_speed
+            if keys[pygame.K_DOWN] or keys[pygame.K_s]:
+                dx = -math.cos(burrb_angle) * current_speed
+                dy = -math.sin(burrb_angle) * current_speed
+
+            # Keep angle in the range 0 to 2*pi (a full circle)
+            burrb_angle = burrb_angle % (2 * math.pi)
+
+            # Update facing_left for when we switch back to top-down
+            facing_left = math.pi / 2 < burrb_angle < 3 * math.pi / 2
+        else:
+            # TOP-DOWN CONTROLS (the original controls):
+            # Arrow keys / WASD move in that direction directly
+            if keys[pygame.K_LEFT] or keys[pygame.K_a]:
+                dx = -current_speed
+                facing_left = True
+            if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+                dx = current_speed
+                facing_left = False
+            if keys[pygame.K_UP] or keys[pygame.K_w]:
+                dy = -current_speed
+            if keys[pygame.K_DOWN] or keys[pygame.K_s]:
+                dy = current_speed
+
+            # Diagonal movement shouldn't be faster
+            if dx != 0 and dy != 0:
+                dx *= 0.707
+                dy *= 0.707
+
+            # Update the angle to match movement direction, so when you
+            # switch to first person you're already looking the right way
+            if dx != 0 or dy != 0:
+                burrb_angle = math.atan2(dy, dx)
+
+        # --- TOUCH MOVEMENT ---
+        # If no keyboard input and we have a touch move target, walk toward it!
+        if dx == 0 and dy == 0 and touch_move_target is not None and touch_active:
+            target_x, target_y = touch_move_target
+            if inside_building is not None:
+                # Moving inside a building
+                tmx = target_x - interior_x
+                tmy = target_y - interior_y
+            else:
+                # Moving outside
+                tmx = target_x - burrb_x
+                tmy = target_y - burrb_y
+            touch_dist = math.sqrt(tmx * tmx + tmy * tmy)
+            if touch_dist > 8:  # not close enough yet, keep walking
+                # Normalize and apply speed
+                dx = (tmx / touch_dist) * current_speed
+                dy = (tmy / touch_dist) * current_speed
+                # Update facing direction
+                if not first_person:
+                    facing_left = dx < 0
+                    burrb_angle = math.atan2(dy, dx)
+                else:
+                    burrb_angle = math.atan2(tmy, tmx)
+            else:
+                # Arrived at target!
+                touch_move_target = None
+
+        # First-person touch: swipe to turn, hold upper screen to walk forward
+        if touch_active and touch_held and first_person and touch_btn_pressed is None:
+            tx, ty = touch_pos
+            sx, sy = touch_start_pos
+            # Horizontal swipe = turning
+            swipe_dx = tx - sx
+            if abs(swipe_dx) > 5:
+                burrb_angle += swipe_dx * 0.003
+                burrb_angle = burrb_angle % (2 * math.pi)
+                facing_left = math.pi / 2 < burrb_angle < 3 * math.pi / 2
+            # Tap in upper half of screen = walk forward
+            if ty < SCREEN_HEIGHT * 0.5:
+                dx = math.cos(burrb_angle) * current_speed
+                dy = math.sin(burrb_angle) * current_speed
+
+        # Try to move (check collisions) - works the same in both modes!
+        is_walking = dx != 0 or dy != 0
+
+        if inside_building is not None:
+            # INSIDE A BUILDING - use interior collision
+            if dx != 0:
+                new_x = interior_x + dx
+                if can_move_interior(inside_building, new_x, interior_y):
+                    interior_x = new_x
+            if dy != 0:
+                new_y = interior_y + dy
+                if can_move_interior(inside_building, interior_x, new_y):
+                    interior_y = new_y
+        else:
+            # OUTSIDE - use world collision
+            if dx != 0:
+                new_x = burrb_x + dx
+                if can_move_to(new_x, burrb_y):
+                    burrb_x = new_x
+            if dy != 0:
+                new_y = burrb_y + dy
+                if can_move_to(burrb_x, new_y):
+                    burrb_y = new_y
+
+        if is_walking:
+            walk_frame += 1
+        else:
+            walk_frame = 0
+
+        # --- UPDATE RESIDENT BURRB (angry chase!) ---
+        # If we're inside a building and the resident is angry (we stole chips!),
+        # the resident chases us around the room!
+        # BUT if we're invisible, they can't see us - they just wander confused!
+        if inside_building is not None and inside_building.resident_angry:
+            bld = inside_building
+            if invisible_timer > 0:
+                # Can't see us! Wander randomly
+                rand_angle = math.sin(bld.resident_walk_frame * 0.05) * 0.8
+                chase_dx = math.cos(rand_angle) * bld.resident_speed * 0.5
+                chase_dy = math.sin(rand_angle) * bld.resident_speed * 0.5
+                new_rx = bld.resident_x + chase_dx
+                new_ry = bld.resident_y + chase_dy
+                if can_move_interior(bld, new_rx, bld.resident_y):
+                    bld.resident_x = new_rx
+                if can_move_interior(bld, bld.resident_x, new_ry):
+                    bld.resident_y = new_ry
+                bld.resident_walk_frame += 1
+            else:
+                pass  # (chase logic continues below)
+        if (
+            inside_building is not None
+            and inside_building.resident_angry
+            and invisible_timer <= 0
+        ):
+            bld = inside_building
+            # Move resident toward the player
+            chase_dx = interior_x - bld.resident_x
+            chase_dy = interior_y - bld.resident_y
+            chase_dist = math.sqrt(chase_dx * chase_dx + chase_dy * chase_dy)
+            if chase_dist > 0:
+                # Normalize and move at resident speed
+                move_x = (chase_dx / chase_dist) * bld.resident_speed
+                move_y = (chase_dy / chase_dist) * bld.resident_speed
+                # Try to move (respect interior walls!)
+                new_rx = bld.resident_x + move_x
+                new_ry = bld.resident_y + move_y
+                if can_move_interior(bld, new_rx, bld.resident_y):
+                    bld.resident_x = new_rx
+                if can_move_interior(bld, bld.resident_x, new_ry):
+                    bld.resident_y = new_ry
+                bld.resident_walk_frame += 1
+
+            # Did the resident catch the player? Push them back!
+            catch_dx = interior_x - bld.resident_x
+            catch_dy = interior_y - bld.resident_y
+            catch_dist = math.sqrt(catch_dx * catch_dx + catch_dy * catch_dy)
+            if catch_dist < 14:  # caught!
+                # Push the player away from the resident
+                if catch_dist > 0:
+                    push_x = (catch_dx / catch_dist) * 8
+                    push_y = (catch_dy / catch_dist) * 8
+                    new_px = interior_x + push_x
+                    new_py = interior_y + push_y
+                    if can_move_interior(bld, new_px, interior_y):
+                        interior_x = new_px
+                    if can_move_interior(bld, interior_x, new_py):
+                        interior_y = new_py
+
+        # --- UPDATE NPCs ---
+        # Every frame, each NPC takes a step and maybe changes direction
+        # UNLESS they're frozen by the Freeze ability!
+        if freeze_timer <= 0:
+            for npc in npcs:
+                npc.update()
+        # (When frozen, NPCs just stand perfectly still - like statues!)
+
+        # --- UPDATE CARS ---
+        # Cars drive along roads every frame
+        if inside_building is None:
+            for car in cars:
+                car.update()
+
+        # --- UPDATE TONGUE ---
+        # The tongue extends outward, checks if it hits any NPC,
+        # then retracts back. If it hits an NPC, that NPC turns to stone!
+        # Mega Tongue ability doubles the range!
+        effective_tongue_max = tongue_max_length * (2.0 if ability_unlocked[2] else 1.0)
+        if tongue_active:
+            if not tongue_retracting:
+                # Tongue is shooting outward
+                tongue_length += tongue_speed
+                if tongue_length >= effective_tongue_max:
+                    # Reached max length, start pulling back
+                    tongue_retracting = True
+
+                # Check if tongue tip hit any NPC!
+                tip_x = burrb_x + math.cos(tongue_angle) * tongue_length
+                tip_y = burrb_y + math.sin(tongue_angle) * tongue_length
+                for npc in npcs:
+                    if npc.npc_type == "rock":
+                        continue  # already a rock, skip
+                    ddx = npc.x - tip_x
+                    ddy = npc.y - tip_y
+                    hit_dist = math.sqrt(ddx * ddx + ddy * ddy)
+                    if hit_dist < 16:  # close enough = hit!
+                        # PETRIFY! Turn this NPC into a rock!
+                        npc.npc_type = "rock"
+                        npc.color = (120, 120, 110)  # gray rock color
+                        npc.detail_color = (90, 90, 80)  # darker gray
+                        npc.speed = 0  # rocks don't move
+                        tongue_hit_npc = npc
+                        tongue_retracting = True  # tongue snaps back
+                        break
+            else:
+                # Tongue is retracting
+                tongue_length -= tongue_speed * 1.5  # retract faster
+                if tongue_length <= 0:
+                    tongue_length = 0
+                    tongue_active = False
+                    tongue_hit_npc = None
+
+        # --- CAMERA ---
+        # Smoothly follow the burrb (the camera "lerps" toward the burrb)
+        target_cam_x = burrb_x - SCREEN_WIDTH // 2
+        target_cam_y = burrb_y - SCREEN_HEIGHT // 2
+        cam_x += (target_cam_x - cam_x) * 0.08
+        cam_y += (target_cam_y - cam_y) * 0.08
+
+        # --- DRAWING ---
+        if inside_building is not None:
+            # ========== INSIDE A BUILDING ==========
+            if first_person:
+                # First person inside the building
+                draw_interior_first_person(
+                    screen, inside_building, interior_x, interior_y, burrb_angle
+                )
+                # Beak at bottom
+                beak_cx = SCREEN_WIDTH // 2
+                beak_cy = SCREEN_HEIGHT - 50
+                pygame.draw.polygon(
+                    screen,
+                    BURRB_ORANGE,
+                    [
+                        (beak_cx - 12, beak_cy + 10),
+                        (beak_cx, beak_cy - 8),
+                        (beak_cx + 12, beak_cy + 10),
+                    ],
+                )
+                pygame.draw.polygon(
+                    screen,
+                    (200, 130, 20),
+                    [
+                        (beak_cx - 12, beak_cy + 10),
+                        (beak_cx, beak_cy - 8),
+                        (beak_cx + 12, beak_cy + 10),
+                    ],
+                    2,
+                )
+            else:
+                # Top-down inside the building
+                draw_interior_topdown(screen, inside_building, interior_x, interior_y)
+
+            # Door prompt if near interior door
+            if is_at_interior_door(inside_building, interior_x, interior_y):
+                prompt = font.render("Press E to exit", True, YELLOW)
+                prompt_shadow = font.render("Press E to exit", True, BLACK)
+                px_pos = SCREEN_WIDTH // 2 - prompt.get_width() // 2
+                screen.blit(prompt_shadow, (px_pos + 1, SCREEN_HEIGHT // 2 + 101))
+                screen.blit(prompt, (px_pos, SCREEN_HEIGHT // 2 + 100))
+
+            # Chip stealing prompt if near the chip bag!
+            bld = inside_building
+            if not bld.chips_stolen and bld.chips_x > 0:
+                chip_dx = interior_x - bld.chips_x
+                chip_dy = interior_y - bld.chips_y
+                chip_dist = math.sqrt(chip_dx * chip_dx + chip_dy * chip_dy)
+                if chip_dist < 30:
+                    chip_prompt = font.render(
+                        "Press E to take chips!", True, (255, 200, 50)
+                    )
+                    chip_shadow = font.render("Press E to take chips!", True, BLACK)
+                    cpx = SCREEN_WIDTH // 2 - chip_prompt.get_width() // 2
+                    screen.blit(chip_shadow, (cpx + 1, SCREEN_HEIGHT // 2 + 71))
+                    screen.blit(chip_prompt, (cpx, SCREEN_HEIGHT // 2 + 70))
+
+            # Closet prompt if near the closet!
+            if not bld.closet_opened and bld.closet_x > 0:
+                cl_dx = interior_x - bld.closet_x
+                cl_dy = interior_y - bld.closet_y
+                cl_dist = math.sqrt(cl_dx * cl_dx + cl_dy * cl_dy)
+                if cl_dist < 30:
+                    cl_prompt = font.render(
+                        "Press E to open closet!", True, (200, 170, 100)
+                    )
+                    cl_shadow = font.render("Press E to open closet!", True, BLACK)
+                    clpx = SCREEN_WIDTH // 2 - cl_prompt.get_width() // 2
+                    screen.blit(cl_shadow, (clpx + 1, SCREEN_HEIGHT // 2 + 41))
+                    screen.blit(cl_prompt, (clpx, SCREEN_HEIGHT // 2 + 40))
+
+            # "Found chips in closet!" message
+            if closet_msg_timer > 0:
+                found_text = font.render(
+                    "Found 2 chips in the closet!", True, (100, 255, 100)
+                )
+                found_shadow = font.render("Found 2 chips in the closet!", True, BLACK)
+                ftx = SCREEN_WIDTH // 2 - found_text.get_width() // 2
+                screen.blit(found_shadow, (ftx + 1, SCREEN_HEIGHT // 2 - 29))
+                screen.blit(found_text, (ftx, SCREEN_HEIGHT // 2 - 30))
+
+            # Warning text when resident is angry!
+            if bld.resident_angry:
+                warn_text = font.render("THE BURRB IS ANGRY!", True, (255, 60, 60))
+                warn_shadow = font.render("THE BURRB IS ANGRY!", True, BLACK)
+                wpx = SCREEN_WIDTH // 2 - warn_text.get_width() // 2
+                # Make it flash by only showing every other half-second
+                if (pygame.time.get_ticks() // 400) % 2 == 0:
+                    screen.blit(warn_shadow, (wpx + 1, 71))
+                    screen.blit(warn_text, (wpx, 70))
+
+        elif first_person:
+            # ========== FIRST PERSON MODE (Doom-style!) ==========
+            # Draw the 3D raycasted view and get the depth buffer back
+            depth_buf = draw_first_person(screen, burrb_x, burrb_y, burrb_angle)
+
+            # Draw NPCs as billboard sprites in 3D with depth testing!
+            # They properly hide behind walls now, just like in Doom!
+            draw_npcs_first_person(screen, burrb_x, burrb_y, burrb_angle, npcs, depth_buf)
+
+            # Draw cars as billboard sprites in 3D with depth testing!
+            draw_cars_first_person(screen, burrb_x, burrb_y, burrb_angle, cars, depth_buf)
+
+            # Draw the minimap in the corner so you don't get lost
+            draw_minimap(screen, burrb_x, burrb_y, burrb_angle)
+
+            # Draw a tiny burrb beak at the bottom of screen (like a nose)
             beak_cx = SCREEN_WIDTH // 2
             beak_cy = SCREEN_HEIGHT - 50
             pygame.draw.polygon(
@@ -4556,423 +4674,329 @@ while running:
                 ],
                 2,
             )
+
+            # Draw the tongue in first-person mode!
+            # It shoots out from the beak tip toward the center of the screen
+            if tongue_active and tongue_length > 0:
+                # Tongue goes from beak tip toward the center/horizon
+                eff_tmax = tongue_max_length * (2.0 if ability_unlocked[2] else 1.0)
+                t_progress = tongue_length / eff_tmax
+                tongue_start_x = beak_cx
+                tongue_start_y = beak_cy - 8  # tip of beak
+                # Target: center of screen (horizon where it would hit something)
+                tongue_target_x = SCREEN_WIDTH // 2
+                tongue_target_y = SCREEN_HEIGHT // 2 - 30
+                # Interpolate from beak to target based on progress
+                tongue_end_x = int(
+                    tongue_start_x + (tongue_target_x - tongue_start_x) * t_progress
+                )
+                tongue_end_y = int(
+                    tongue_start_y + (tongue_target_y - tongue_start_y) * t_progress
+                )
+                # Tongue gets thinner as it extends further
+                tongue_thick = max(2, int(6 * (1.0 - t_progress * 0.5)))
+                # Main tongue
+                pygame.draw.line(
+                    screen,
+                    (220, 80, 100),
+                    (tongue_start_x, tongue_start_y),
+                    (tongue_end_x, tongue_end_y),
+                    tongue_thick,
+                )
+                # Lighter center
+                pygame.draw.line(
+                    screen,
+                    (255, 140, 160),
+                    (tongue_start_x, tongue_start_y),
+                    (tongue_end_x, tongue_end_y),
+                    max(1, tongue_thick - 2),
+                )
+                # Tip blob
+                tip_r = max(3, int(6 * (1.0 - t_progress * 0.3)))
+                pygame.draw.circle(
+                    screen, (220, 60, 80), (tongue_end_x, tongue_end_y), tip_r
+                )
+                pygame.draw.circle(
+                    screen, (255, 120, 140), (tongue_end_x, tongue_end_y), max(1, tip_r - 2)
+                )
+
         else:
-            # Top-down inside the building
-            draw_interior_topdown(screen, inside_building, interior_x, interior_y)
+            # ========== TOP-DOWN MODE (the original view) ==========
+            # Fill the background (cement/concrete color for the city)
+            screen.fill((190, 185, 175))
 
-        # Door prompt if near interior door
-        if is_at_interior_door(inside_building, interior_x, interior_y):
-            prompt = font.render("Press E to exit", True, YELLOW)
-            prompt_shadow = font.render("Press E to exit", True, BLACK)
-            px_pos = SCREEN_WIDTH // 2 - prompt.get_width() // 2
-            screen.blit(prompt_shadow, (px_pos + 1, SCREEN_HEIGHT // 2 + 101))
-            screen.blit(prompt, (px_pos, SCREEN_HEIGHT // 2 + 100))
+            # Draw parks
+            for park in parks:
+                pr = pygame.Rect(park.x - cam_x, park.y - cam_y, park.w, park.h)
+                pygame.draw.rect(screen, (100, 180, 80), pr, border_radius=12)
+                pygame.draw.rect(screen, DARK_GREEN, pr, 2, border_radius=12)
 
-        # Chip stealing prompt if near the chip bag!
-        bld = inside_building
-        if not bld.chips_stolen and bld.chips_x > 0:
-            chip_dx = interior_x - bld.chips_x
-            chip_dy = interior_y - bld.chips_y
-            chip_dist = math.sqrt(chip_dx * chip_dx + chip_dy * chip_dy)
-            if chip_dist < 30:
-                chip_prompt = font.render(
-                    "Press E to take chips!", True, (255, 200, 50)
+            # Draw roads
+            draw_road_grid(screen, cam_x, cam_y)
+
+            # Draw cars on the roads
+            for car in sorted(cars, key=lambda c: c.y):
+                draw_car_topdown(screen, car, cam_x, cam_y)
+
+            # Draw trees (behind the burrb if they're above it)
+            for tx, ty, tsize in trees:
+                if ty < burrb_y:
+                    draw_tree(screen, tx, ty, tsize, cam_x, cam_y)
+
+            # Draw buildings (sorted by y position for depth)
+            for b in sorted(buildings, key=lambda b: b.y + b.h):
+                b.draw(screen, cam_x, cam_y)
+
+            # Draw NPCs (sorted by Y so ones lower on screen draw on top)
+            for npc in sorted(npcs, key=lambda n: n.y):
+                draw_npc_topdown(screen, npc, cam_x, cam_y)
+                # Freeze effect: draw a blue ice overlay on frozen NPCs
+                if freeze_timer > 0 and npc.npc_type != "rock":
+                    npc_sx = int(npc.x - cam_x)
+                    npc_sy = int(npc.y - cam_y)
+                    if (
+                        -20 < npc_sx < SCREEN_WIDTH + 20
+                        and -20 < npc_sy < SCREEN_HEIGHT + 20
+                    ):
+                        ice_surf = pygame.Surface((20, 20), pygame.SRCALPHA)
+                        ice_alpha = 100 + int(math.sin(freeze_timer * 0.1) * 40)
+                        pygame.draw.rect(
+                            ice_surf,
+                            (100, 180, 255, ice_alpha),
+                            (0, 0, 20, 20),
+                            border_radius=4,
+                        )
+                        # Little ice sparkles
+                        for sp in range(3):
+                            spx = 4 + sp * 6
+                            spy = 3 + (sp % 2) * 10
+                            pygame.draw.circle(
+                                ice_surf, (200, 230, 255, 180), (spx, spy), 2
+                            )
+                        screen.blit(ice_surf, (npc_sx - 10, npc_sy - 10))
+
+            # Draw the burrb (with Giant Mode and Invisibility effects!)
+            if giant_scale > 1.05 or invisible_timer > 0:
+                # Draw to a temp surface so we can scale/alpha it
+                temp_size = int(60 * giant_scale)
+                temp_surf = pygame.Surface((temp_size, temp_size), pygame.SRCALPHA)
+                # Draw burrb centered on temp surface
+                draw_burrb(
+                    temp_surf,
+                    temp_size // 2,
+                    temp_size // 2,
+                    0,
+                    0,
+                    facing_left,
+                    walk_frame,
                 )
-                chip_shadow = font.render("Press E to take chips!", True, BLACK)
-                cpx = SCREEN_WIDTH // 2 - chip_prompt.get_width() // 2
-                screen.blit(chip_shadow, (cpx + 1, SCREEN_HEIGHT // 2 + 71))
-                screen.blit(chip_prompt, (cpx, SCREEN_HEIGHT // 2 + 70))
+                # Scale it up for giant mode
+                if giant_scale > 1.05:
+                    new_w = int(temp_size * giant_scale)
+                    new_h = int(temp_size * giant_scale)
+                    temp_surf = pygame.transform.scale(temp_surf, (new_w, new_h))
+                else:
+                    new_w = temp_size
+                    new_h = temp_size
+                # Invisibility = semi-transparent + blue tint
+                if invisible_timer > 0:
+                    temp_surf.set_alpha(60)
+                # Blit at the correct world position
+                blit_x = int(burrb_x - cam_x - new_w // 2)
+                blit_y = int(burrb_y - cam_y - new_h // 2)
+                screen.blit(temp_surf, (blit_x, blit_y))
+            else:
+                draw_burrb(screen, burrb_x, burrb_y, cam_x, cam_y, facing_left, walk_frame)
 
-        # Closet prompt if near the closet!
-        if not bld.closet_opened and bld.closet_x > 0:
-            cl_dx = interior_x - bld.closet_x
-            cl_dy = interior_y - bld.closet_y
-            cl_dist = math.sqrt(cl_dx * cl_dx + cl_dy * cl_dy)
-            if cl_dist < 30:
-                cl_prompt = font.render(
-                    "Press E to open closet!", True, (200, 170, 100)
-                )
-                cl_shadow = font.render("Press E to open closet!", True, BLACK)
-                clpx = SCREEN_WIDTH // 2 - cl_prompt.get_width() // 2
-                screen.blit(cl_shadow, (clpx + 1, SCREEN_HEIGHT // 2 + 41))
-                screen.blit(cl_prompt, (clpx, SCREEN_HEIGHT // 2 + 40))
-
-        # "Found chips in closet!" message
-        if closet_msg_timer > 0:
-            found_text = font.render(
-                "Found 2 chips in the closet!", True, (100, 255, 100)
-            )
-            found_shadow = font.render("Found 2 chips in the closet!", True, BLACK)
-            ftx = SCREEN_WIDTH // 2 - found_text.get_width() // 2
-            screen.blit(found_shadow, (ftx + 1, SCREEN_HEIGHT // 2 - 29))
-            screen.blit(found_text, (ftx, SCREEN_HEIGHT // 2 - 30))
-
-        # Warning text when resident is angry!
-        if bld.resident_angry:
-            warn_text = font.render("THE BURRB IS ANGRY!", True, (255, 60, 60))
-            warn_shadow = font.render("THE BURRB IS ANGRY!", True, BLACK)
-            wpx = SCREEN_WIDTH // 2 - warn_text.get_width() // 2
-            # Make it flash by only showing every other half-second
-            if (pygame.time.get_ticks() // 400) % 2 == 0:
-                screen.blit(warn_shadow, (wpx + 1, 71))
-                screen.blit(warn_text, (wpx, 70))
-
-    elif first_person:
-        # ========== FIRST PERSON MODE (Doom-style!) ==========
-        # Draw the 3D raycasted view and get the depth buffer back
-        depth_buf = draw_first_person(screen, burrb_x, burrb_y, burrb_angle)
-
-        # Draw NPCs as billboard sprites in 3D with depth testing!
-        # They properly hide behind walls now, just like in Doom!
-        draw_npcs_first_person(screen, burrb_x, burrb_y, burrb_angle, npcs, depth_buf)
-
-        # Draw cars as billboard sprites in 3D with depth testing!
-        draw_cars_first_person(screen, burrb_x, burrb_y, burrb_angle, cars, depth_buf)
-
-        # Draw the minimap in the corner so you don't get lost
-        draw_minimap(screen, burrb_x, burrb_y, burrb_angle)
-
-        # Draw a tiny burrb beak at the bottom of screen (like a nose)
-        beak_cx = SCREEN_WIDTH // 2
-        beak_cy = SCREEN_HEIGHT - 50
-        pygame.draw.polygon(
-            screen,
-            BURRB_ORANGE,
-            [
-                (beak_cx - 12, beak_cy + 10),
-                (beak_cx, beak_cy - 8),
-                (beak_cx + 12, beak_cy + 10),
-            ],
-        )
-        pygame.draw.polygon(
-            screen,
-            (200, 130, 20),
-            [
-                (beak_cx - 12, beak_cy + 10),
-                (beak_cx, beak_cy - 8),
-                (beak_cx + 12, beak_cy + 10),
-            ],
-            2,
-        )
-
-        # Draw the tongue in first-person mode!
-        # It shoots out from the beak tip toward the center of the screen
-        if tongue_active and tongue_length > 0:
-            # Tongue goes from beak tip toward the center/horizon
-            eff_tmax = tongue_max_length * (2.0 if ability_unlocked[2] else 1.0)
-            t_progress = tongue_length / eff_tmax
-            tongue_start_x = beak_cx
-            tongue_start_y = beak_cy - 8  # tip of beak
-            # Target: center of screen (horizon where it would hit something)
-            tongue_target_x = SCREEN_WIDTH // 2
-            tongue_target_y = SCREEN_HEIGHT // 2 - 30
-            # Interpolate from beak to target based on progress
-            tongue_end_x = int(
-                tongue_start_x + (tongue_target_x - tongue_start_x) * t_progress
-            )
-            tongue_end_y = int(
-                tongue_start_y + (tongue_target_y - tongue_start_y) * t_progress
-            )
-            # Tongue gets thinner as it extends further
-            tongue_thick = max(2, int(6 * (1.0 - t_progress * 0.5)))
-            # Main tongue
-            pygame.draw.line(
-                screen,
-                (220, 80, 100),
-                (tongue_start_x, tongue_start_y),
-                (tongue_end_x, tongue_end_y),
-                tongue_thick,
-            )
-            # Lighter center
-            pygame.draw.line(
-                screen,
-                (255, 140, 160),
-                (tongue_start_x, tongue_start_y),
-                (tongue_end_x, tongue_end_y),
-                max(1, tongue_thick - 2),
-            )
-            # Tip blob
-            tip_r = max(3, int(6 * (1.0 - t_progress * 0.3)))
-            pygame.draw.circle(
-                screen, (220, 60, 80), (tongue_end_x, tongue_end_y), tip_r
-            )
-            pygame.draw.circle(
-                screen, (255, 120, 140), (tongue_end_x, tongue_end_y), max(1, tip_r - 2)
-            )
-
-    else:
-        # ========== TOP-DOWN MODE (the original view) ==========
-        # Fill the background (cement/concrete color for the city)
-        screen.fill((190, 185, 175))
-
-        # Draw parks
-        for park in parks:
-            pr = pygame.Rect(park.x - cam_x, park.y - cam_y, park.w, park.h)
-            pygame.draw.rect(screen, (100, 180, 80), pr, border_radius=12)
-            pygame.draw.rect(screen, DARK_GREEN, pr, 2, border_radius=12)
-
-        # Draw roads
-        draw_road_grid(screen, cam_x, cam_y)
-
-        # Draw cars on the roads
-        for car in sorted(cars, key=lambda c: c.y):
-            draw_car_topdown(screen, car, cam_x, cam_y)
-
-        # Draw trees (behind the burrb if they're above it)
-        for tx, ty, tsize in trees:
-            if ty < burrb_y:
-                draw_tree(screen, tx, ty, tsize, cam_x, cam_y)
-
-        # Draw buildings (sorted by y position for depth)
-        for b in sorted(buildings, key=lambda b: b.y + b.h):
-            b.draw(screen, cam_x, cam_y)
-
-        # Draw NPCs (sorted by Y so ones lower on screen draw on top)
-        for npc in sorted(npcs, key=lambda n: n.y):
-            draw_npc_topdown(screen, npc, cam_x, cam_y)
-            # Freeze effect: draw a blue ice overlay on frozen NPCs
-            if freeze_timer > 0 and npc.npc_type != "rock":
-                npc_sx = int(npc.x - cam_x)
-                npc_sy = int(npc.y - cam_y)
-                if (
-                    -20 < npc_sx < SCREEN_WIDTH + 20
-                    and -20 < npc_sy < SCREEN_HEIGHT + 20
-                ):
-                    ice_surf = pygame.Surface((20, 20), pygame.SRCALPHA)
-                    ice_alpha = 100 + int(math.sin(freeze_timer * 0.1) * 40)
+            # Dash trail effect!
+            if dash_active > 0:
+                burrb_sx = int(burrb_x - cam_x)
+                burrb_sy = int(burrb_y - cam_y)
+                for trail_i in range(3):
+                    trail_offset = (trail_i + 1) * 8
+                    trail_alpha = 120 - trail_i * 40
+                    trail_x = burrb_sx - int(math.cos(burrb_angle) * trail_offset)
+                    trail_y = burrb_sy - int(math.sin(burrb_angle) * trail_offset)
+                    trail_surf = pygame.Surface((16, 16), pygame.SRCALPHA)
                     pygame.draw.rect(
-                        ice_surf,
-                        (100, 180, 255, ice_alpha),
-                        (0, 0, 20, 20),
+                        trail_surf,
+                        (60, 150, 220, trail_alpha),
+                        (0, 0, 16, 16),
                         border_radius=4,
                     )
-                    # Little ice sparkles
-                    for sp in range(3):
-                        spx = 4 + sp * 6
-                        spy = 3 + (sp % 2) * 10
-                        pygame.draw.circle(
-                            ice_surf, (200, 230, 255, 180), (spx, spy), 2
-                        )
-                    screen.blit(ice_surf, (npc_sx - 10, npc_sy - 10))
+                    screen.blit(trail_surf, (trail_x - 8, trail_y - 8))
 
-        # Draw the burrb (with Giant Mode and Invisibility effects!)
-        if giant_scale > 1.05 or invisible_timer > 0:
-            # Draw to a temp surface so we can scale/alpha it
-            temp_size = int(60 * giant_scale)
-            temp_surf = pygame.Surface((temp_size, temp_size), pygame.SRCALPHA)
-            # Draw burrb centered on temp surface
-            draw_burrb(
-                temp_surf,
-                temp_size // 2,
-                temp_size // 2,
-                0,
-                0,
-                facing_left,
-                walk_frame,
-            )
-            # Scale it up for giant mode
-            if giant_scale > 1.05:
-                new_w = int(temp_size * giant_scale)
-                new_h = int(temp_size * giant_scale)
-                temp_surf = pygame.transform.scale(temp_surf, (new_w, new_h))
-            else:
-                new_w = temp_size
-                new_h = temp_size
-            # Invisibility = semi-transparent + blue tint
-            if invisible_timer > 0:
-                temp_surf.set_alpha(60)
-            # Blit at the correct world position
-            blit_x = int(burrb_x - cam_x - new_w // 2)
-            blit_y = int(burrb_y - cam_y - new_h // 2)
-            screen.blit(temp_surf, (blit_x, blit_y))
-        else:
-            draw_burrb(screen, burrb_x, burrb_y, cam_x, cam_y, facing_left, walk_frame)
-
-        # Dash trail effect!
-        if dash_active > 0:
-            burrb_sx = int(burrb_x - cam_x)
-            burrb_sy = int(burrb_y - cam_y)
-            for trail_i in range(3):
-                trail_offset = (trail_i + 1) * 8
-                trail_alpha = 120 - trail_i * 40
-                trail_x = burrb_sx - int(math.cos(burrb_angle) * trail_offset)
-                trail_y = burrb_sy - int(math.sin(burrb_angle) * trail_offset)
-                trail_surf = pygame.Surface((16, 16), pygame.SRCALPHA)
-                pygame.draw.rect(
-                    trail_surf,
-                    (60, 150, 220, trail_alpha),
-                    (0, 0, 16, 16),
-                    border_radius=4,
+            # Draw the tongue in top-down mode!
+            if tongue_active and tongue_length > 0:
+                burrb_sx = burrb_x - cam_x
+                burrb_sy = burrb_y - cam_y
+                tip_sx = burrb_sx + math.cos(tongue_angle) * tongue_length
+                tip_sy = burrb_sy + math.sin(tongue_angle) * tongue_length
+                # Tongue is pink/red, gets thicker near the base
+                # Base (thick part)
+                pygame.draw.line(
+                    screen,
+                    (220, 80, 100),
+                    (int(burrb_sx), int(burrb_sy)),
+                    (int(tip_sx), int(tip_sy)),
+                    4,
                 )
-                screen.blit(trail_surf, (trail_x - 8, trail_y - 8))
+                # Center line (lighter pink)
+                pygame.draw.line(
+                    screen,
+                    (255, 140, 160),
+                    (int(burrb_sx), int(burrb_sy)),
+                    (int(tip_sx), int(tip_sy)),
+                    2,
+                )
+                # Tongue tip (round blob)
+                pygame.draw.circle(
+                    screen,
+                    (220, 60, 80),
+                    (int(tip_sx), int(tip_sy)),
+                    5,
+                )
+                pygame.draw.circle(
+                    screen,
+                    (255, 120, 140),
+                    (int(tip_sx), int(tip_sy)),
+                    3,
+                )
 
-        # Draw the tongue in top-down mode!
-        if tongue_active and tongue_length > 0:
-            burrb_sx = burrb_x - cam_x
-            burrb_sy = burrb_y - cam_y
-            tip_sx = burrb_sx + math.cos(tongue_angle) * tongue_length
-            tip_sy = burrb_sy + math.sin(tongue_angle) * tongue_length
-            # Tongue is pink/red, gets thicker near the base
-            # Base (thick part)
-            pygame.draw.line(
-                screen,
-                (220, 80, 100),
-                (int(burrb_sx), int(burrb_sy)),
-                (int(tip_sx), int(tip_sy)),
-                4,
-            )
-            # Center line (lighter pink)
-            pygame.draw.line(
-                screen,
-                (255, 140, 160),
-                (int(burrb_sx), int(burrb_sy)),
-                (int(tip_sx), int(tip_sy)),
-                2,
-            )
-            # Tongue tip (round blob)
-            pygame.draw.circle(
-                screen,
-                (220, 60, 80),
-                (int(tip_sx), int(tip_sy)),
-                5,
-            )
-            pygame.draw.circle(
-                screen,
-                (255, 120, 140),
-                (int(tip_sx), int(tip_sy)),
-                3,
-            )
+            # Draw trees in front of burrb (if they're below it)
+            for tx, ty, tsize in trees:
+                if ty >= burrb_y:
+                    draw_tree(screen, tx, ty, tsize, cam_x, cam_y)
 
-        # Draw trees in front of burrb (if they're below it)
-        for tx, ty, tsize in trees:
-            if ty >= burrb_y:
-                draw_tree(screen, tx, ty, tsize, cam_x, cam_y)
+        # --- UI overlay (shown in both modes) ---
+        # Game title
+        title_text = title_font.render("Life of a Burrb", True, WHITE)
+        title_shadow = title_font.render("Life of a Burrb", True, BLACK)
+        screen.blit(title_shadow, (12, 12))
+        screen.blit(title_text, (10, 10))
 
-    # --- UI overlay (shown in both modes) ---
-    # Game title
-    title_text = title_font.render("Life of a Burrb", True, WHITE)
-    title_shadow = title_font.render("Life of a Burrb", True, BLACK)
-    screen.blit(title_shadow, (12, 12))
-    screen.blit(title_text, (10, 10))
-
-    # Mode indicator
-    if inside_building is not None:
-        mode_text = font.render("[INSIDE]", True, YELLOW)
-        mode_shadow = font.render("[INSIDE]", True, BLACK)
-        if first_person:
-            help_msg = (
-                "A/D turn, W/S walk  |  E take/exit  |  SPACE toggle view  |  ESC quit"
-            )
+        # Mode indicator
+        if inside_building is not None:
+            mode_text = font.render("[INSIDE]", True, YELLOW)
+            mode_shadow = font.render("[INSIDE]", True, BLACK)
+            if first_person:
+                help_msg = (
+                    "A/D turn, W/S walk  |  E take/exit  |  SPACE toggle view  |  ESC quit"
+                )
+            else:
+                help_msg = (
+                    "Arrows/WASD walk  |  E take/exit  |  SPACE toggle view  |  ESC quit"
+                )
+        elif first_person:
+            mode_text = font.render("[FIRST PERSON]", True, BURRB_ORANGE)
+            mode_shadow = font.render("[FIRST PERSON]", True, BLACK)
+            help_msg = "A/D turn, W/S walk  |  O tongue  |  E enter  |  TAB shop  |  SPACE top-down"
         else:
-            help_msg = (
-                "Arrows/WASD walk  |  E take/exit  |  SPACE toggle view  |  ESC quit"
+            mode_text = font.render("[TOP DOWN]", True, BURRB_LIGHT_BLUE)
+            mode_shadow = font.render("[TOP DOWN]", True, BLACK)
+            help_msg = "Arrows/WASD walk  |  O tongue  |  E enter  |  TAB shop  |  SPACE first person"
+
+        screen.blit(mode_shadow, (12, 42))
+        screen.blit(mode_text, (10, 40))
+
+        # Chips collected counter!
+        if chips_collected > 0:
+            chip_str = f"Chips: {chips_collected}"
+            chip_text = font.render(chip_str, True, (255, 200, 50))
+            chip_shadow = font.render(chip_str, True, BLACK)
+            chip_x_pos = SCREEN_WIDTH - chip_text.get_width() - 12
+            screen.blit(chip_shadow, (chip_x_pos + 1, 12))
+            screen.blit(chip_text, (chip_x_pos, 10))
+            # Little chip bag icon next to the counter
+            icon_x = chip_x_pos - 16
+            pygame.draw.rect(screen, (220, 160, 30), (icon_x, 8, 12, 16), border_radius=2)
+            pygame.draw.rect(screen, (200, 40, 40), (icon_x, 14, 12, 5))
+            pygame.draw.rect(
+                screen, (150, 100, 20), (icon_x, 8, 12, 16), 1, border_radius=2
             )
-    elif first_person:
-        mode_text = font.render("[FIRST PERSON]", True, BURRB_ORANGE)
-        mode_shadow = font.render("[FIRST PERSON]", True, BLACK)
-        help_msg = "A/D turn, W/S walk  |  O tongue  |  E enter  |  TAB shop  |  SPACE top-down"
-    else:
-        mode_text = font.render("[TOP DOWN]", True, BURRB_LIGHT_BLUE)
-        mode_shadow = font.render("[TOP DOWN]", True, BLACK)
-        help_msg = "Arrows/WASD walk  |  O tongue  |  E enter  |  TAB shop  |  SPACE first person"
 
-    screen.blit(mode_shadow, (12, 42))
-    screen.blit(mode_text, (10, 40))
+        # Active ability indicators (shown on the right side below chip counter)
+        ability_y = 34
+        # Show active timed abilities with remaining time bars
+        active_abilities = []
+        if freeze_timer > 0:
+            active_abilities.append(("FREEZE", (100, 180, 255), freeze_timer, 300))
+        if invisible_timer > 0:
+            active_abilities.append(("INVISIBLE", (180, 140, 255), invisible_timer, 300))
+        if giant_timer > 0:
+            active_abilities.append(("GIANT", (255, 140, 60), giant_timer, 480))
+        if dash_active > 0:
+            active_abilities.append(("DASH!", (255, 255, 100), dash_active, 12))
+        # Show always-on abilities as small badges
+        passive_badges = []
+        if ability_unlocked[1]:  # Super Speed
+            passive_badges.append(("SPD", (100, 255, 100)))
+        if ability_unlocked[2]:  # Mega Tongue
+            passive_badges.append(("TNG", (255, 120, 160)))
+        if ability_unlocked[0] and not ability_unlocked[1]:  # Dash (only if no super speed)
+            passive_badges.append(("DSH", (255, 255, 100)))
 
-    # Chips collected counter!
-    if chips_collected > 0:
-        chip_str = f"Chips: {chips_collected}"
-        chip_text = font.render(chip_str, True, (255, 200, 50))
-        chip_shadow = font.render(chip_str, True, BLACK)
-        chip_x_pos = SCREEN_WIDTH - chip_text.get_width() - 12
-        screen.blit(chip_shadow, (chip_x_pos + 1, 12))
-        screen.blit(chip_text, (chip_x_pos, 10))
-        # Little chip bag icon next to the counter
-        icon_x = chip_x_pos - 16
-        pygame.draw.rect(screen, (220, 160, 30), (icon_x, 8, 12, 16), border_radius=2)
-        pygame.draw.rect(screen, (200, 40, 40), (icon_x, 14, 12, 5))
-        pygame.draw.rect(
-            screen, (150, 100, 20), (icon_x, 8, 12, 16), 1, border_radius=2
-        )
+        for ab_name, ab_color, ab_timer, ab_max in active_abilities:
+            # Background bar
+            bar_w = 90
+            bar_h = 14
+            bar_x = SCREEN_WIDTH - bar_w - 12
+            bar_y = ability_y
+            pygame.draw.rect(
+                screen, (30, 30, 40), (bar_x, bar_y, bar_w, bar_h), border_radius=3
+            )
+            # Fill bar
+            fill_w = int(bar_w * ab_timer / ab_max)
+            pygame.draw.rect(
+                screen, ab_color, (bar_x, bar_y, fill_w, bar_h), border_radius=3
+            )
+            # Label
+            ab_txt = font.render(ab_name, True, WHITE)
+            screen.blit(ab_txt, (bar_x - ab_txt.get_width() - 6, bar_y - 2))
+            ability_y += 20
 
-    # Active ability indicators (shown on the right side below chip counter)
-    ability_y = 34
-    # Show active timed abilities with remaining time bars
-    active_abilities = []
-    if freeze_timer > 0:
-        active_abilities.append(("FREEZE", (100, 180, 255), freeze_timer, 300))
-    if invisible_timer > 0:
-        active_abilities.append(("INVISIBLE", (180, 140, 255), invisible_timer, 300))
-    if giant_timer > 0:
-        active_abilities.append(("GIANT", (255, 140, 60), giant_timer, 480))
-    if dash_active > 0:
-        active_abilities.append(("DASH!", (255, 255, 100), dash_active, 12))
-    # Show always-on abilities as small badges
-    passive_badges = []
-    if ability_unlocked[1]:  # Super Speed
-        passive_badges.append(("SPD", (100, 255, 100)))
-    if ability_unlocked[2]:  # Mega Tongue
-        passive_badges.append(("TNG", (255, 120, 160)))
-    if ability_unlocked[0] and not ability_unlocked[1]:  # Dash (only if no super speed)
-        passive_badges.append(("DSH", (255, 255, 100)))
+        # Passive ability badges
+        if passive_badges:
+            badge_x = SCREEN_WIDTH - 12
+            for badge_name, badge_color in passive_badges:
+                badge_txt = font.render(badge_name, True, badge_color)
+                badge_x -= badge_txt.get_width() + 8
+                screen.blit(badge_txt, (badge_x, ability_y))
+            ability_y += 20
 
-    for ab_name, ab_color, ab_timer, ab_max in active_abilities:
-        # Background bar
-        bar_w = 90
-        bar_h = 14
-        bar_x = SCREEN_WIDTH - bar_w - 12
-        bar_y = ability_y
-        pygame.draw.rect(
-            screen, (30, 30, 40), (bar_x, bar_y, bar_w, bar_h), border_radius=3
-        )
-        # Fill bar
-        fill_w = int(bar_w * ab_timer / ab_max)
-        pygame.draw.rect(
-            screen, ab_color, (bar_x, bar_y, fill_w, bar_h), border_radius=3
-        )
-        # Label
-        ab_txt = font.render(ab_name, True, WHITE)
-        screen.blit(ab_txt, (bar_x - ab_txt.get_width() - 6, bar_y - 2))
-        ability_y += 20
+        # Mini instructions
+        help_text = font.render(help_msg, True, WHITE)
+        help_shadow = font.render(help_msg, True, BLACK)
+        screen.blit(help_shadow, (12, SCREEN_HEIGHT - 28))
+        screen.blit(help_text, (10, SCREEN_HEIGHT - 30))
 
-    # Passive ability badges
-    if passive_badges:
-        badge_x = SCREEN_WIDTH - 12
-        for badge_name, badge_color in passive_badges:
-            badge_txt = font.render(badge_name, True, badge_color)
-            badge_x -= badge_txt.get_width() + 8
-            screen.blit(badge_txt, (badge_x, ability_y))
-        ability_y += 20
+        # Door prompt when near a building outside
+        if inside_building is None:
+            nearby = get_nearby_door_building(burrb_x, burrb_y)
+            if nearby is not None:
+                prompt = font.render("Press E to enter", True, YELLOW)
+                prompt_shadow = font.render("Press E to enter", True, BLACK)
+                px_pos = SCREEN_WIDTH // 2 - prompt.get_width() // 2
+                screen.blit(prompt_shadow, (px_pos + 1, SCREEN_HEIGHT // 2 + 101))
+                screen.blit(prompt, (px_pos, SCREEN_HEIGHT // 2 + 100))
 
-    # Mini instructions
-    help_text = font.render(help_msg, True, WHITE)
-    help_shadow = font.render(help_msg, True, BLACK)
-    screen.blit(help_shadow, (12, SCREEN_HEIGHT - 28))
-    screen.blit(help_text, (10, SCREEN_HEIGHT - 30))
+        # Draw touch buttons (only if touch has been used)
+        if touch_active:
+            draw_touch_buttons(screen)
 
-    # Door prompt when near a building outside
-    if inside_building is None:
-        nearby = get_nearby_door_building(burrb_x, burrb_y)
-        if nearby is not None:
-            prompt = font.render("Press E to enter", True, YELLOW)
-            prompt_shadow = font.render("Press E to enter", True, BLACK)
-            px_pos = SCREEN_WIDTH // 2 - prompt.get_width() // 2
-            screen.blit(prompt_shadow, (px_pos + 1, SCREEN_HEIGHT // 2 + 101))
-            screen.blit(prompt, (px_pos, SCREEN_HEIGHT // 2 + 100))
+        # JUMP SCARE! Draw the scary birb on top of EVERYTHING!
+        if jumpscare_timer > 0:
+            draw_jumpscare(screen, jumpscare_frame)
 
-    # Draw touch buttons (only if touch has been used)
-    if touch_active:
-        draw_touch_buttons(screen)
+        # Update the display (flip the "page" so we see what we just drew)
+        pygame.display.flip()
 
-    # JUMP SCARE! Draw the scary birb on top of EVERYTHING!
-    if jumpscare_timer > 0:
-        draw_jumpscare(screen, jumpscare_frame)
+        # Tick the clock - this keeps the game at 60 FPS
+        clock.tick(FPS)
+        await asyncio.sleep(0)
 
-    # Update the display (flip the "page" so we see what we just drew)
-    pygame.display.flip()
+    # Clean up when the game is done
+    pygame.quit()
 
-    # Tick the clock - this keeps the game at 60 FPS
-    clock.tick(FPS)
 
-# Clean up when the game is done
-pygame.quit()
+asyncio.run(main())
