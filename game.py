@@ -3656,6 +3656,129 @@ title_font = pygame.font.Font(None, 42)
 shop_font = pygame.font.Font(None, 32)
 shop_title_font = pygame.font.Font(None, 48)
 
+# ============================================================
+# TOUCH CONTROLS
+# ============================================================
+# Touch support for phones, tablets, and touchscreen computers!
+# Tap the screen to move, use on-screen buttons for actions.
+# Touch is auto-detected: buttons appear when you touch the screen.
+
+touch_active = False  # has the player used touch? (shows buttons)
+touch_move_target = None  # (x, y) world position to walk toward, or None
+touch_held = False  # is a finger currently touching the screen?
+touch_pos = (0, 0)  # current touch position on screen
+touch_start_pos = (0, 0)  # where the finger first touched
+touch_finger_id = None  # track which finger is the main one
+
+# On-screen button layout (right side of screen)
+# Each button: (label, center_x, center_y, radius, key_action)
+TOUCH_BTN_RADIUS = 28
+TOUCH_BTN_PAD = 8
+_br = TOUCH_BTN_RADIUS
+_bx = SCREEN_WIDTH - _br - 12  # right edge
+_bx2 = _bx - _br * 2 - TOUCH_BTN_PAD  # second column from right
+
+TOUCH_BUTTONS = [
+    # Right column (main actions)
+    ("E", _bx, SCREEN_HEIGHT - _br - 12, _br, "action_e"),
+    ("O", _bx, SCREEN_HEIGHT - _br * 3 - 20, _br, "action_o"),
+    # Second column
+    ("VIEW", _bx2, SCREEN_HEIGHT - _br - 12, _br, "toggle_view"),
+    ("SHOP", _bx2, SCREEN_HEIGHT - _br * 3 - 20, _br, "toggle_shop"),
+]
+
+# Extra ability buttons (only shown when unlocked)
+TOUCH_ABILITY_BUTTONS = [
+    ("F", _bx2, SCREEN_HEIGHT - _br * 5 - 28, _br - 4, "ability_f"),
+    ("I", _bx, SCREEN_HEIGHT - _br * 5 - 28, _br - 4, "ability_i"),
+    (
+        "G",
+        _bx2 + _br + TOUCH_BTN_PAD // 2,
+        SCREEN_HEIGHT - _br * 7 - 36,
+        _br - 4,
+        "ability_g",
+    ),
+]
+
+touch_btn_pressed = None  # which button is currently being pressed
+
+
+def touch_hit_button(tx, ty):
+    """Check if a touch at (tx, ty) hits any on-screen button.
+    Returns the action string or None."""
+    for label, bx, by, br, action in TOUCH_BUTTONS:
+        dx = tx - bx
+        dy = ty - by
+        if dx * dx + dy * dy <= (br + 8) * (br + 8):
+            return action
+    # Check ability buttons only if unlocked
+    for i, (label, bx, by, br, action) in enumerate(TOUCH_ABILITY_BUTTONS):
+        # F=index 3, I=index 4, G=index 5
+        ability_idx = i + 3
+        if ability_idx < len(ability_unlocked) and ability_unlocked[ability_idx]:
+            dx = tx - bx
+            dy = ty - by
+            if dx * dx + dy * dy <= (br + 8) * (br + 8):
+                return action
+    return None
+
+
+def draw_touch_buttons(surface):
+    """Draw the on-screen touch buttons."""
+    btn_font = pygame.font.Font(None, 24)
+
+    for label, bx, by, br, action in TOUCH_BUTTONS:
+        # Button background (semi-transparent circle)
+        btn_surf = pygame.Surface((br * 2 + 2, br * 2 + 2), pygame.SRCALPHA)
+        pressed = touch_btn_pressed == action
+        if pressed:
+            pygame.draw.circle(btn_surf, (255, 255, 255, 160), (br + 1, br + 1), br)
+        else:
+            pygame.draw.circle(btn_surf, (255, 255, 255, 70), (br + 1, br + 1), br)
+        pygame.draw.circle(btn_surf, (255, 255, 255, 120), (br + 1, br + 1), br, 2)
+        surface.blit(btn_surf, (bx - br - 1, by - br - 1))
+        # Label
+        txt = btn_font.render(label, True, WHITE)
+        surface.blit(txt, (bx - txt.get_width() // 2, by - txt.get_height() // 2))
+
+    # Ability buttons (only show if unlocked)
+    for i, (label, bx, by, br, action) in enumerate(TOUCH_ABILITY_BUTTONS):
+        ability_idx = i + 3
+        if ability_idx < len(ability_unlocked) and ability_unlocked[ability_idx]:
+            btn_surf = pygame.Surface((br * 2 + 2, br * 2 + 2), pygame.SRCALPHA)
+            pressed = touch_btn_pressed == action
+            # Color-code ability buttons
+            colors = [(100, 180, 255, 100), (180, 100, 255, 100), (100, 255, 100, 100)]
+            bg_color = colors[i] if i < len(colors) else (255, 255, 255, 70)
+            if pressed:
+                bg_color = (bg_color[0], bg_color[1], bg_color[2], 200)
+            pygame.draw.circle(btn_surf, bg_color, (br + 1, br + 1), br)
+            pygame.draw.circle(btn_surf, (255, 255, 255, 120), (br + 1, br + 1), br, 2)
+            surface.blit(btn_surf, (bx - br - 1, by - br - 1))
+            txt = btn_font.render(label, True, WHITE)
+            surface.blit(txt, (bx - txt.get_width() // 2, by - txt.get_height() // 2))
+
+    # Draw move target indicator if active (small pulsing circle)
+    if touch_move_target is not None and not first_person:
+        tgt_x, tgt_y = touch_move_target
+        if inside_building is not None:
+            # Interior coords to screen coords
+            icam_x = interior_x - SCREEN_WIDTH // 2
+            icam_y = interior_y - SCREEN_HEIGHT // 2
+            sx = int(tgt_x - icam_x)
+            sy = int(tgt_y - icam_y)
+        else:
+            # World coords to screen coords
+            sx = int(tgt_x - cam_x)
+            sy = int(tgt_y - cam_y)
+        if 0 <= sx <= SCREEN_WIDTH and 0 <= sy <= SCREEN_HEIGHT:
+            pulse = abs(math.sin(pygame.time.get_ticks() * 0.005)) * 4
+            r = int(6 + pulse)
+            ind_surf = pygame.Surface((r * 2 + 2, r * 2 + 2), pygame.SRCALPHA)
+            pygame.draw.circle(ind_surf, (255, 255, 100, 120), (r + 1, r + 1), r)
+            pygame.draw.circle(ind_surf, (255, 255, 100, 200), (r + 1, r + 1), r, 1)
+            surface.blit(ind_surf, (sx - r - 1, sy - r - 1))
+
 
 # ============================================================
 # COLLISION - so the burrb can't walk through buildings
@@ -3847,6 +3970,7 @@ while running:
                         interior_x = float(nearby.spawn_x)
                         interior_y = float(nearby.spawn_y)
                         burrb_angle = math.pi * 1.5  # face upward (into the room)
+                        touch_move_target = None  # clear touch target
                 else:
                     # Try to open the closet!
                     bld = inside_building
@@ -3888,6 +4012,7 @@ while running:
                         burrb_y = saved_outdoor_y
                         burrb_angle = saved_outdoor_angle
                         inside_building = None
+                        touch_move_target = None  # clear touch target
 
             # --- ABILITY ACTIVATION KEYS ---
 
@@ -3906,9 +4031,191 @@ while running:
                 if ability_unlocked[5] and giant_timer <= 0:
                     giant_timer = 480  # 8 seconds
 
+        # === TOUCH / MOUSE INPUT ===
+        # Handle finger touch events (phones/tablets) AND mouse clicks
+        # (touchscreen laptops report mouse events for touch)
+        if event.type == pygame.FINGERDOWN:
+            touch_active = True
+            tx = int(event.x * SCREEN_WIDTH)
+            ty = int(event.y * SCREEN_HEIGHT)
+            touch_held = True
+            touch_pos = (tx, ty)
+            touch_start_pos = (tx, ty)
+            touch_finger_id = event.finger_id
+
+            # Check if a button was pressed
+            btn = touch_hit_button(tx, ty)
+            if btn is not None:
+                touch_btn_pressed = btn
+            else:
+                touch_btn_pressed = None
+                # Tap to move! Convert screen position to world/interior position
+                if not shop_open:
+                    if inside_building is not None:
+                        # Inside a building: figure out interior coords from screen
+                        bld = inside_building
+                        tile = bld.interior_tile
+                        if first_person:
+                            # In first-person interior, tapping doesn't set move target
+                            pass
+                        else:
+                            # Top-down interior: screen is centered on burrb
+                            icam_x = interior_x - SCREEN_WIDTH // 2
+                            icam_y = interior_y - SCREEN_HEIGHT // 2
+                            touch_move_target = (tx + icam_x, ty + icam_y)
+                    elif first_person:
+                        # First person outdoor: tap left/right to turn, upper to walk
+                        pass  # handled in FINGERMOTION / held check
+                    else:
+                        # Top-down outdoor: convert screen coords to world coords
+                        touch_move_target = (tx + cam_x, ty + cam_y)
+
+        if event.type == pygame.FINGERMOTION:
+            if event.finger_id == touch_finger_id:
+                tx = int(event.x * SCREEN_WIDTH)
+                ty = int(event.y * SCREEN_HEIGHT)
+                touch_pos = (tx, ty)
+
+        if event.type == pygame.FINGERUP:
+            if event.finger_id == touch_finger_id:
+                tx = int(event.x * SCREEN_WIDTH)
+                ty = int(event.y * SCREEN_HEIGHT)
+
+                # If a button was pressed, trigger its action on release
+                if touch_btn_pressed is not None:
+                    btn = touch_hit_button(tx, ty)
+                    if btn == touch_btn_pressed:
+                        # Trigger the button action!
+                        if btn == "action_e":
+                            # Simulate pressing E
+                            fake_event = pygame.event.Event(
+                                pygame.KEYDOWN, key=pygame.K_e
+                            )
+                            pygame.event.post(fake_event)
+                        elif btn == "action_o":
+                            fake_event = pygame.event.Event(
+                                pygame.KEYDOWN, key=pygame.K_o
+                            )
+                            pygame.event.post(fake_event)
+                        elif btn == "toggle_view":
+                            fake_event = pygame.event.Event(
+                                pygame.KEYDOWN, key=pygame.K_SPACE
+                            )
+                            pygame.event.post(fake_event)
+                        elif btn == "toggle_shop":
+                            fake_event = pygame.event.Event(
+                                pygame.KEYDOWN, key=pygame.K_TAB
+                            )
+                            pygame.event.post(fake_event)
+                        elif btn == "ability_f":
+                            fake_event = pygame.event.Event(
+                                pygame.KEYDOWN, key=pygame.K_f
+                            )
+                            pygame.event.post(fake_event)
+                        elif btn == "ability_i":
+                            fake_event = pygame.event.Event(
+                                pygame.KEYDOWN, key=pygame.K_i
+                            )
+                            pygame.event.post(fake_event)
+                        elif btn == "ability_g":
+                            fake_event = pygame.event.Event(
+                                pygame.KEYDOWN, key=pygame.K_g
+                            )
+                            pygame.event.post(fake_event)
+
+                touch_held = False
+                touch_btn_pressed = None
+                touch_finger_id = None
+
+        # Also handle mouse clicks as touch (for touchscreen laptops)
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            touch_active = True
+            tx, ty = event.pos
+            touch_held = True
+            touch_pos = (tx, ty)
+            touch_start_pos = (tx, ty)
+
+            btn = touch_hit_button(tx, ty)
+            if btn is not None:
+                touch_btn_pressed = btn
+            else:
+                touch_btn_pressed = None
+                if not shop_open:
+                    if inside_building is not None:
+                        if not first_person:
+                            icam_x = interior_x - SCREEN_WIDTH // 2
+                            icam_y = interior_y - SCREEN_HEIGHT // 2
+                            touch_move_target = (tx + icam_x, ty + icam_y)
+                    elif not first_person:
+                        touch_move_target = (tx + cam_x, ty + cam_y)
+
+        if event.type == pygame.MOUSEMOTION and touch_held:
+            touch_pos = event.pos
+
+        if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            tx, ty = event.pos
+            if touch_btn_pressed is not None:
+                btn = touch_hit_button(tx, ty)
+                if btn == touch_btn_pressed:
+                    if btn == "action_e":
+                        pygame.event.post(
+                            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_e)
+                        )
+                    elif btn == "action_o":
+                        pygame.event.post(
+                            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_o)
+                        )
+                    elif btn == "toggle_view":
+                        pygame.event.post(
+                            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE)
+                        )
+                    elif btn == "toggle_shop":
+                        pygame.event.post(
+                            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_TAB)
+                        )
+                    elif btn == "ability_f":
+                        pygame.event.post(
+                            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_f)
+                        )
+                    elif btn == "ability_i":
+                        pygame.event.post(
+                            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_i)
+                        )
+                    elif btn == "ability_g":
+                        pygame.event.post(
+                            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_g)
+                        )
+            touch_held = False
+            touch_btn_pressed = None
+
+    # Handle touch input for the shop (tap abilities to select/buy)
+    if shop_open and touch_active and touch_held:
+        tx, ty = touch_pos
+        box_w = 500
+        box_h = 420
+        box_x = (SCREEN_WIDTH - box_w) // 2
+        box_y = (SCREEN_HEIGHT - box_h) // 2
+        # Check if tap is inside the shop box
+        if box_x <= tx <= box_x + box_w:
+            for i in range(len(ABILITIES)):
+                row_y = box_y + 90 + i * 52
+                if row_y - 4 <= ty <= row_y + 48:
+                    if shop_cursor == i:
+                        # Already selected - try to buy!
+                        cost = ABILITIES[i][1]
+                        if not ability_unlocked[i] and chips_collected >= cost:
+                            chips_collected -= cost
+                            ability_unlocked[i] = True
+                    else:
+                        shop_cursor = i
+                    touch_held = False  # prevent repeated taps
+                    break
+
     # Skip movement and updates when shop is open (game is paused)
     if shop_open:
         draw_shop(screen)
+        if touch_active:
+            draw_touch_buttons(screen)
         pygame.display.flip()
         clock.tick(FPS)
         continue
@@ -3965,6 +4272,22 @@ while running:
         speed_mult *= 0.8
     current_speed = burrb_speed * speed_mult
 
+    # Cancel touch movement if keyboard is used
+    if any(
+        keys[k]
+        for k in (
+            pygame.K_LEFT,
+            pygame.K_RIGHT,
+            pygame.K_UP,
+            pygame.K_DOWN,
+            pygame.K_a,
+            pygame.K_d,
+            pygame.K_w,
+            pygame.K_s,
+        )
+    ):
+        touch_move_target = None
+
     if first_person:
         # FIRST PERSON CONTROLS:
         # Left/Right (or A/D) = TURN (rotate which way you're looking)
@@ -4012,6 +4335,48 @@ while running:
         # switch to first person you're already looking the right way
         if dx != 0 or dy != 0:
             burrb_angle = math.atan2(dy, dx)
+
+    # --- TOUCH MOVEMENT ---
+    # If no keyboard input and we have a touch move target, walk toward it!
+    if dx == 0 and dy == 0 and touch_move_target is not None and touch_active:
+        target_x, target_y = touch_move_target
+        if inside_building is not None:
+            # Moving inside a building
+            tmx = target_x - interior_x
+            tmy = target_y - interior_y
+        else:
+            # Moving outside
+            tmx = target_x - burrb_x
+            tmy = target_y - burrb_y
+        touch_dist = math.sqrt(tmx * tmx + tmy * tmy)
+        if touch_dist > 8:  # not close enough yet, keep walking
+            # Normalize and apply speed
+            dx = (tmx / touch_dist) * current_speed
+            dy = (tmy / touch_dist) * current_speed
+            # Update facing direction
+            if not first_person:
+                facing_left = dx < 0
+                burrb_angle = math.atan2(dy, dx)
+            else:
+                burrb_angle = math.atan2(tmy, tmx)
+        else:
+            # Arrived at target!
+            touch_move_target = None
+
+    # First-person touch: swipe to turn, hold upper screen to walk forward
+    if touch_active and touch_held and first_person and touch_btn_pressed is None:
+        tx, ty = touch_pos
+        sx, sy = touch_start_pos
+        # Horizontal swipe = turning
+        swipe_dx = tx - sx
+        if abs(swipe_dx) > 5:
+            burrb_angle += swipe_dx * 0.003
+            burrb_angle = burrb_angle % (2 * math.pi)
+            facing_left = math.pi / 2 < burrb_angle < 3 * math.pi / 2
+        # Tap in upper half of screen = walk forward
+        if ty < SCREEN_HEIGHT * 0.5:
+            dx = math.cos(burrb_angle) * current_speed
+            dy = math.sin(burrb_angle) * current_speed
 
     # Try to move (check collisions) - works the same in both modes!
     is_walking = dx != 0 or dy != 0
@@ -4594,6 +4959,10 @@ while running:
             px_pos = SCREEN_WIDTH // 2 - prompt.get_width() // 2
             screen.blit(prompt_shadow, (px_pos + 1, SCREEN_HEIGHT // 2 + 101))
             screen.blit(prompt, (px_pos, SCREEN_HEIGHT // 2 + 100))
+
+    # Draw touch buttons (only if touch has been used)
+    if touch_active:
+        draw_touch_buttons(screen)
 
     # JUMP SCARE! Draw the scary birb on top of EVERYTHING!
     if jumpscare_timer > 0:
