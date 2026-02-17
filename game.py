@@ -71,6 +71,7 @@ class Building:
     DOOR_TILE = 3
     SOFA = 4
     TV = 5
+    CLOSET = 6
 
     def __init__(self, x, y, w, h, color, roof_color):
         self.x = x
@@ -158,6 +159,12 @@ class Building:
         self.chips_y = 0.0
         self.chips_stolen = False  # did the player take the chips?
 
+        # Closet! Every house has a closet. Open it for chips... or a scare!
+        self.closet_opened = False  # has the closet been opened?
+        self.closet_x = 0.0  # pixel position of closet center
+        self.closet_y = 0.0
+        self.closet_jumpscare = False  # was this closet a jump scare?
+
         # Find the sofa position to place the resident and chips
         tile = self.interior_tile
         for row in range(self.interior_h):
@@ -169,6 +176,17 @@ class Building:
                     # Put chips right next to the sofa
                     self.chips_x = (col + 1) * tile + tile // 2
                     self.chips_y = row * tile + tile // 2
+                    break
+            else:
+                continue
+            break
+
+        # Find the closet position
+        for row in range(self.interior_h):
+            for col in range(self.interior_w):
+                if self.interior[row][col] == self.CLOSET:
+                    self.closet_x = col * tile + tile // 2
+                    self.closet_y = row * tile + tile // 2
                     break
             else:
                 continue
@@ -258,6 +276,18 @@ class Building:
         if sofa_col + 1 < self.interior_w - 1:
             if grid[sofa_row][sofa_col + 1] == self.FLOOR:
                 grid[sofa_row][sofa_col + 1] = self.SOFA
+
+        # === CLOSET ===
+        # Every house has a closet against the left wall!
+        # Open it to find chips... or get jump scared!
+        closet_row = rng.randint(3, self.interior_h - 4)
+        closet_col = 1  # against the left wall
+        # Make sure we don't overwrite something important
+        if grid[closet_row][closet_col] != self.FLOOR:
+            # Try the right wall instead
+            closet_col = self.interior_w - 2
+        if grid[closet_row][closet_col] == self.FLOOR:
+            grid[closet_row][closet_col] = self.CLOSET
 
         return grid
 
@@ -2557,7 +2587,7 @@ def can_move_interior(bld, x, y):
         if row < 0 or row >= bld.interior_h or col < 0 or col >= bld.interior_w:
             return False
         cell = bld.interior[row][col]
-        if cell in (Building.WALL, Building.FURNITURE, Building.TV):
+        if cell in (Building.WALL, Building.FURNITURE, Building.TV, Building.CLOSET):
             return False
     return True
 
@@ -2747,6 +2777,72 @@ def draw_interior_topdown(surface, bld, px, py):
                     (50, 50, 50),
                     (sx + tile // 2 - 3, sy + tile - margin, 6, 2),
                 )
+
+            elif cell == Building.CLOSET:
+                # Draw floor underneath
+                floor_c = bld.floor_color
+                pygame.draw.rect(surface, floor_c, (sx, sy, tile, tile))
+                margin = 2
+                if bld.closet_opened:
+                    # Open closet - dark inside with door swung open
+                    pygame.draw.rect(
+                        surface,
+                        (40, 28, 18),
+                        (
+                            sx + margin,
+                            sy + margin,
+                            tile - margin * 2,
+                            tile - margin * 2,
+                        ),
+                        border_radius=1,
+                    )
+                    # Open door (thin strip on the right side)
+                    pygame.draw.rect(
+                        surface,
+                        (160, 110, 60),
+                        (sx + tile - margin - 4, sy + margin, 4, tile - margin * 2),
+                    )
+                else:
+                    # Closed closet - wooden double doors
+                    pygame.draw.rect(
+                        surface,
+                        (160, 110, 60),
+                        (
+                            sx + margin,
+                            sy + margin,
+                            tile - margin * 2,
+                            tile - margin * 2,
+                        ),
+                        border_radius=2,
+                    )
+                    # Door line down the middle
+                    pygame.draw.line(
+                        surface,
+                        (120, 80, 40),
+                        (sx + tile // 2, sy + margin),
+                        (sx + tile // 2, sy + tile - margin),
+                        1,
+                    )
+                    # Two little doorknobs
+                    pygame.draw.circle(
+                        surface, (200, 180, 50), (sx + tile // 2 - 3, sy + tile // 2), 2
+                    )
+                    pygame.draw.circle(
+                        surface, (200, 180, 50), (sx + tile // 2 + 3, sy + tile // 2), 2
+                    )
+                    # Outline
+                    pygame.draw.rect(
+                        surface,
+                        (100, 65, 30),
+                        (
+                            sx + margin,
+                            sy + margin,
+                            tile - margin * 2,
+                            tile - margin * 2,
+                        ),
+                        1,
+                        border_radius=2,
+                    )
 
     # Draw the resident burrb (sitting or chasing!)
     if bld.resident_x > 0:
@@ -2981,7 +3077,13 @@ def draw_interior_first_person(surface, bld, px, py, angle):
                 break
 
             cell = bld.interior[map_y][map_x]
-            if cell in (Building.WALL, Building.FURNITURE, Building.SOFA, Building.TV):
+            if cell in (
+                Building.WALL,
+                Building.FURNITURE,
+                Building.SOFA,
+                Building.TV,
+                Building.CLOSET,
+            ):
                 hit_type = cell
                 hit = True
                 break
@@ -3009,6 +3111,11 @@ def draw_interior_first_person(surface, bld, px, py, angle):
                 base = (80, 120, 200)  # blue sofa
             elif hit_type == Building.TV:
                 base = (30, 30, 30)  # dark TV screen
+            elif hit_type == Building.CLOSET:
+                if bld.closet_opened:
+                    base = (60, 40, 25)  # dark open closet
+                else:
+                    base = (160, 110, 60)  # wooden closet door
             else:
                 base = bld.furniture_color
 
@@ -3211,6 +3318,240 @@ def draw_interior_first_person(surface, bld, px, py, angle):
         _draw_interior_billboard(bld.chips_x, bld.chips_y, _draw_chips_fp, 10, 12)
 
 
+def draw_jumpscare(surface, frame):
+    """
+    Draw a TERRIFYING birb jump scare!
+    A scary birb bursts out with its mouth wide open showing
+    sharp bloody teeth. The screen shakes and flashes!
+    """
+    sw = SCREEN_WIDTH
+    sh = SCREEN_HEIGHT
+
+    # Screen flash effect (red flash at the start!)
+    if frame < 8:
+        flash_alpha = max(0, 255 - frame * 32)
+        flash_surf = pygame.Surface((sw, sh))
+        flash_surf.fill((200, 0, 0))
+        flash_surf.set_alpha(flash_alpha)
+        surface.blit(flash_surf, (0, 0))
+
+    # Screen shake
+    shake_x = random.randint(-8, 8) if frame < 60 else 0
+    shake_y = random.randint(-8, 8) if frame < 60 else 0
+
+    # The scary birb grows from center, reaching full size quickly
+    grow = min(1.0, frame / 12.0)
+    size = int(350 * grow)
+    if size < 10:
+        return
+
+    # Center of the birb face
+    cx = sw // 2 + shake_x
+    cy = sh // 2 + shake_y - 20
+
+    # Dark background overlay
+    dark = pygame.Surface((sw, sh))
+    dark.fill((10, 0, 0))
+    dark.set_alpha(200)
+    surface.blit(dark, (0, 0))
+
+    # === THE SCARY BIRB ===
+    # Body (big dark shape)
+    body_w = size
+    body_h = int(size * 1.1)
+    body_color = (40, 35, 50)
+    pygame.draw.ellipse(
+        surface,
+        body_color,
+        (cx - body_w // 2, cy - body_h // 3, body_w, body_h),
+    )
+
+    # Spiky hair on top (jagged, scary!)
+    spike_base_y = cy - body_h // 3
+    num_spikes = 7
+    for i in range(num_spikes):
+        spike_x = cx - size // 3 + i * (size * 2 // 3) // max(1, num_spikes - 1)
+        spike_h = random.randint(size // 5, size // 3)
+        spike_w = size // 10
+        pygame.draw.polygon(
+            surface,
+            (20, 15, 30),
+            [
+                (spike_x - spike_w, spike_base_y + 5),
+                (spike_x + random.randint(-3, 3), spike_base_y - spike_h),
+                (spike_x + spike_w, spike_base_y + 5),
+            ],
+        )
+
+    # EYES - big, angry, glowing red!
+    eye_y = cy + size // 12
+    eye_spacing = size // 4
+    eye_size = size // 6
+
+    # Left eye (angry red glow)
+    pygame.draw.circle(surface, (180, 0, 0), (cx - eye_spacing, eye_y), eye_size + 4)
+    pygame.draw.circle(surface, (255, 20, 20), (cx - eye_spacing, eye_y), eye_size)
+    # Tiny pupil (makes it scarier)
+    pygame.draw.circle(surface, (0, 0, 0), (cx - eye_spacing, eye_y), eye_size // 3)
+    # Angry eyebrow
+    pygame.draw.line(
+        surface,
+        (20, 10, 10),
+        (cx - eye_spacing - eye_size, eye_y - eye_size - 4),
+        (cx - eye_spacing + eye_size, eye_y - eye_size + 6),
+        max(2, size // 40),
+    )
+
+    # Right eye
+    pygame.draw.circle(surface, (180, 0, 0), (cx + eye_spacing, eye_y), eye_size + 4)
+    pygame.draw.circle(surface, (255, 20, 20), (cx + eye_spacing, eye_y), eye_size)
+    pygame.draw.circle(surface, (0, 0, 0), (cx + eye_spacing, eye_y), eye_size // 3)
+    # Angry eyebrow
+    pygame.draw.line(
+        surface,
+        (20, 10, 10),
+        (cx + eye_spacing - eye_size, eye_y - eye_size + 6),
+        (cx + eye_spacing + eye_size, eye_y - eye_size - 4),
+        max(2, size // 40),
+    )
+
+    # === THE MOUTH - WIDE OPEN WITH SHARP BLOODY TEETH ===
+    mouth_y = cy + size // 3
+    mouth_w = int(size * 0.7)
+    mouth_h = int(size * 0.45)
+
+    # Mouth opening (dark gaping hole)
+    pygame.draw.ellipse(
+        surface,
+        (30, 0, 0),
+        (cx - mouth_w // 2, mouth_y - mouth_h // 4, mouth_w, mouth_h),
+    )
+    # Inner mouth (red/dark red throat)
+    inner_w = int(mouth_w * 0.7)
+    inner_h = int(mouth_h * 0.6)
+    pygame.draw.ellipse(
+        surface,
+        (100, 10, 10),
+        (cx - inner_w // 2, mouth_y + mouth_h // 8, inner_w, inner_h),
+    )
+
+    # SHARP TEETH - TOP ROW
+    num_teeth = 9
+    tooth_w = mouth_w // (num_teeth + 1)
+    for i in range(num_teeth):
+        tx = (
+            cx
+            - mouth_w // 2
+            + tooth_w // 2
+            + i * (mouth_w - tooth_w) // max(1, num_teeth - 1)
+        )
+        # Teeth are triangular and jagged
+        tooth_h = random.randint(size // 8, size // 5)
+        # White-ish tooth with blood
+        tooth_color = (240, 235, 220)
+        pygame.draw.polygon(
+            surface,
+            tooth_color,
+            [
+                (tx - tooth_w // 2, mouth_y - mouth_h // 8),
+                (tx + random.randint(-2, 2), mouth_y - mouth_h // 8 + tooth_h),
+                (tx + tooth_w // 2, mouth_y - mouth_h // 8),
+            ],
+        )
+        # Blood dripping from some teeth!
+        if random.random() > 0.4:
+            blood_len = random.randint(size // 12, size // 6)
+            pygame.draw.line(
+                surface,
+                (180, 0, 0),
+                (tx, mouth_y - mouth_h // 8 + tooth_h),
+                (
+                    tx + random.randint(-3, 3),
+                    mouth_y - mouth_h // 8 + tooth_h + blood_len,
+                ),
+                max(1, size // 80),
+            )
+
+    # SHARP TEETH - BOTTOM ROW (pointing up)
+    for i in range(num_teeth):
+        tx = (
+            cx
+            - mouth_w // 2
+            + tooth_w // 2
+            + i * (mouth_w - tooth_w) // max(1, num_teeth - 1)
+        )
+        tooth_h = random.randint(size // 8, size // 5)
+        tooth_color = (235, 230, 215)
+        bottom_y = mouth_y + mouth_h - mouth_h // 4
+        pygame.draw.polygon(
+            surface,
+            tooth_color,
+            [
+                (tx - tooth_w // 2, bottom_y),
+                (tx + random.randint(-2, 2), bottom_y - tooth_h),
+                (tx + tooth_w // 2, bottom_y),
+            ],
+        )
+        # More blood!
+        if random.random() > 0.5:
+            blood_len = random.randint(size // 15, size // 8)
+            pygame.draw.line(
+                surface,
+                (200, 10, 10),
+                (tx, bottom_y - tooth_h),
+                (tx + random.randint(-2, 2), bottom_y - tooth_h - blood_len),
+                max(1, size // 80),
+            )
+
+    # Beak edges (orange beak outline around mouth area)
+    beak_color = (200, 120, 20)
+    # Upper beak
+    pygame.draw.arc(
+        surface,
+        beak_color,
+        (cx - mouth_w // 2 - 5, mouth_y - mouth_h // 2, mouth_w + 10, mouth_h // 2),
+        0,
+        math.pi,
+        max(2, size // 50),
+    )
+    # Lower beak
+    pygame.draw.arc(
+        surface,
+        beak_color,
+        (cx - mouth_w // 2 - 5, mouth_y + mouth_h // 2, mouth_w + 10, mouth_h // 2),
+        math.pi,
+        math.pi * 2,
+        max(2, size // 50),
+    )
+
+    # Blood splatter around the mouth
+    for _ in range(8):
+        bx = cx + random.randint(-mouth_w // 2, mouth_w // 2)
+        by = mouth_y + random.randint(-mouth_h // 3, mouth_h)
+        br = random.randint(2, max(3, size // 40))
+        pygame.draw.circle(surface, (180, 0, 0), (bx, by), br)
+
+    # Scary text that shakes!
+    scare_font = pygame.font.Font(None, max(24, size // 4))
+    scare_text = scare_font.render("AAAAAHHH!!!", True, (255, 30, 30))
+    text_x = sw // 2 - scare_text.get_width() // 2 + random.randint(-5, 5)
+    text_y = 40 + random.randint(-3, 3)
+    # Shadow
+    scare_shadow = scare_font.render("AAAAAHHH!!!", True, (80, 0, 0))
+    surface.blit(scare_shadow, (text_x + 2, text_y + 2))
+    surface.blit(scare_text, (text_x, text_y))
+
+    # Second text at bottom
+    if frame > 20:
+        sub_font = pygame.font.Font(None, max(20, size // 6))
+        sub_text = sub_font.render(
+            "A BIRB WAS HIDING IN THE CLOSET!", True, (255, 100, 100)
+        )
+        sub_x = sw // 2 - sub_text.get_width() // 2 + random.randint(-3, 3)
+        sub_y = sh - 80 + random.randint(-2, 2)
+        surface.blit(sub_text, (sub_x, sub_y))
+
+
 # ============================================================
 # GAME STATE
 # ============================================================
@@ -3259,6 +3600,13 @@ tongue_hit_npc = None  # did we hit someone? (for visual feedback)
 # Chip collecting!
 # Every building has a bag of chips. Steal them all!
 chips_collected = 0
+
+# Jump scare from closets!
+# When you open a closet and get unlucky, a scary birb jumps out!
+jumpscare_timer = 0  # frames remaining for jump scare (0 = not active)
+jumpscare_frame = 0  # animation frame counter for the scare
+JUMPSCARE_DURATION = 90  # 1.5 seconds at 60fps
+closet_msg_timer = 0  # frames to show "found chips!" message
 
 # ============================================================
 # ABILITIES!
@@ -3500,8 +3848,30 @@ while running:
                         interior_y = float(nearby.spawn_y)
                         burrb_angle = math.pi * 1.5  # face upward (into the room)
                 else:
-                    # Try to steal the chips! (check if near the chip bag)
+                    # Try to open the closet!
                     bld = inside_building
+                    if (
+                        not bld.closet_opened
+                        and bld.closet_x > 0
+                        and jumpscare_timer <= 0
+                    ):
+                        cl_dx = interior_x - bld.closet_x
+                        cl_dy = interior_y - bld.closet_y
+                        cl_dist = math.sqrt(cl_dx * cl_dx + cl_dy * cl_dy)
+                        if cl_dist < 30:  # close enough to open!
+                            bld.closet_opened = True
+                            # 10% chance of jump scare, 90% chance of 2 chips!
+                            if random.random() < 0.1:
+                                # JUMP SCARE!
+                                bld.closet_jumpscare = True
+                                jumpscare_timer = JUMPSCARE_DURATION
+                                jumpscare_frame = 0
+                            else:
+                                # Found 2 chips!
+                                chips_collected += 2
+                                closet_msg_timer = 120  # show message for 2 sec
+
+                    # Try to steal the chips! (check if near the chip bag)
                     if not bld.chips_stolen and bld.chips_x > 0:
                         chip_dx = interior_x - bld.chips_x
                         chip_dy = interior_y - bld.chips_y
@@ -3555,6 +3925,11 @@ while running:
         invisible_timer -= 1
     if giant_timer > 0:
         giant_timer -= 1
+    if jumpscare_timer > 0:
+        jumpscare_timer -= 1
+        jumpscare_frame += 1
+    if closet_msg_timer > 0:
+        closet_msg_timer -= 1
     # Smoothly grow/shrink for giant mode
     target_giant = 2.5 if giant_timer > 0 else 1.0
     giant_scale += (target_giant - giant_scale) * 0.15
@@ -3842,6 +4217,30 @@ while running:
                 cpx = SCREEN_WIDTH // 2 - chip_prompt.get_width() // 2
                 screen.blit(chip_shadow, (cpx + 1, SCREEN_HEIGHT // 2 + 71))
                 screen.blit(chip_prompt, (cpx, SCREEN_HEIGHT // 2 + 70))
+
+        # Closet prompt if near the closet!
+        if not bld.closet_opened and bld.closet_x > 0:
+            cl_dx = interior_x - bld.closet_x
+            cl_dy = interior_y - bld.closet_y
+            cl_dist = math.sqrt(cl_dx * cl_dx + cl_dy * cl_dy)
+            if cl_dist < 30:
+                cl_prompt = font.render(
+                    "Press E to open closet!", True, (200, 170, 100)
+                )
+                cl_shadow = font.render("Press E to open closet!", True, BLACK)
+                clpx = SCREEN_WIDTH // 2 - cl_prompt.get_width() // 2
+                screen.blit(cl_shadow, (clpx + 1, SCREEN_HEIGHT // 2 + 41))
+                screen.blit(cl_prompt, (clpx, SCREEN_HEIGHT // 2 + 40))
+
+        # "Found chips in closet!" message
+        if closet_msg_timer > 0:
+            found_text = font.render(
+                "Found 2 chips in the closet!", True, (100, 255, 100)
+            )
+            found_shadow = font.render("Found 2 chips in the closet!", True, BLACK)
+            ftx = SCREEN_WIDTH // 2 - found_text.get_width() // 2
+            screen.blit(found_shadow, (ftx + 1, SCREEN_HEIGHT // 2 - 29))
+            screen.blit(found_text, (ftx, SCREEN_HEIGHT // 2 - 30))
 
         # Warning text when resident is angry!
         if bld.resident_angry:
@@ -4195,6 +4594,10 @@ while running:
             px_pos = SCREEN_WIDTH // 2 - prompt.get_width() // 2
             screen.blit(prompt_shadow, (px_pos + 1, SCREEN_HEIGHT // 2 + 101))
             screen.blit(prompt, (px_pos, SCREEN_HEIGHT // 2 + 100))
+
+    # JUMP SCARE! Draw the scary birb on top of EVERYTHING!
+    if jumpscare_timer > 0:
+        draw_jumpscare(screen, jumpscare_frame)
 
     # Update the display (flip the "page" so we see what we just drew)
     pygame.display.flip()
