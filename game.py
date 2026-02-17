@@ -3321,159 +3321,226 @@ def draw_interior_first_person(surface, bld, px, py, angle):
 
 def draw_jumpscare(surface, frame):
     """
-    Draw a TERRIFYING birb jump scare!
-    A scary birb bursts out with its mouth wide open showing
-    sharp bloody teeth. The screen shakes and flashes!
+    Draw an ABSOLUTELY TERRIFYING birb jump scare!
+    Multiple phases of horror: flash, zoom-in, the face lunges at you,
+    the screen glitches, blood drips everywhere, and creepy eyes
+    follow you. Way scarier than before!
     """
     sw = SCREEN_WIDTH
     sh = SCREEN_HEIGHT
 
-    # Screen flash effect (red flash at the start!)
+    # === PHASE 1: BLINDING FLASH (frames 0-5) ===
+    # The screen goes full white then red - like a camera flash in your face
+    if frame < 3:
+        surface.fill((255, 255, 255))
+        return
+    if frame < 6:
+        surface.fill((255, 0, 0))
+        return
+
+    # === SCREEN SHAKE (gets more violent over time, then fades) ===
+    if frame < 40:
+        shake_intensity = min(20, frame * 2)  # builds up fast
+    elif frame < 100:
+        shake_intensity = max(0, 20 - (frame - 40) // 4)
+    else:
+        shake_intensity = 0
+    shake_x = random.randint(-shake_intensity, shake_intensity)
+    shake_y = random.randint(-shake_intensity, shake_intensity)
+
+    # === THE BIRB LUNGES AT YOU ===
+    # It starts small and SLAMS toward the screen fast
     if frame < 8:
-        flash_alpha = max(0, 255 - frame * 32)
-        flash_surf = pygame.Surface((sw, sh))
-        flash_surf.fill((200, 0, 0))
-        flash_surf.set_alpha(flash_alpha)
-        surface.blit(flash_surf, (0, 0))
-
-    # Screen shake
-    shake_x = random.randint(-8, 8) if frame < 60 else 0
-    shake_y = random.randint(-8, 8) if frame < 60 else 0
-
-    # The scary birb grows from center, reaching full size quickly
-    grow = min(1.0, frame / 12.0)
-    size = int(350 * grow)
+        grow = (frame - 5) / 3.0  # 0 to 1 in 3 frames - INSTANT
+    else:
+        grow = 1.0
+    # The face also PUSHES closer over time (gets bigger and bigger)
+    lunge = min(1.0, frame / 60.0)
+    size = int((400 + lunge * 150) * max(0.01, grow))
     if size < 10:
         return
 
-    # Center of the birb face
+    # Center (with shake)
     cx = sw // 2 + shake_x
     cy = sh // 2 + shake_y - 20
 
-    # Dark background overlay
-    dark = pygame.Surface((sw, sh))
-    dark.fill((10, 0, 0))
-    dark.set_alpha(200)
-    surface.blit(dark, (0, 0))
+    # === PITCH BLACK BACKGROUND ===
+    surface.fill((0, 0, 0))
 
-    # === THE SCARY BIRB ===
-    # Body (big dark shape)
-    body_w = size
-    body_h = int(size * 1.1)
-    body_color = (40, 35, 50)
+    # === FLICKERING RED STATIC (like a broken TV) ===
+    if frame % 3 == 0 and frame < 90:
+        for _ in range(80):
+            rx = random.randint(0, sw)
+            ry = random.randint(0, sh)
+            rw = random.randint(2, 40)
+            rh = random.randint(1, 3)
+            rc = random.choice([(80, 0, 0), (60, 0, 0), (40, 0, 0), (100, 0, 0)])
+            pygame.draw.rect(surface, rc, (rx, ry, rw, rh))
+
+    # === BLOOD DRIPPING DOWN FROM THE TOP OF THE SCREEN ===
+    blood_seed = random.Random(42)  # consistent drip positions
+    num_drips = 20
+    for i in range(num_drips):
+        drip_x = blood_seed.randint(0, sw)
+        drip_speed = blood_seed.uniform(2.0, 6.0)
+        drip_len = blood_seed.randint(40, 200)
+        drip_width = blood_seed.randint(2, 6)
+        drip_y = int(frame * drip_speed) - blood_seed.randint(0, 100)
+        if drip_y > -drip_len:
+            drip_top = max(0, drip_y - drip_len)
+            drip_bot = min(sh, drip_y)
+            if drip_bot > drip_top:
+                pygame.draw.line(
+                    surface,
+                    (160, 0, 0),
+                    (drip_x, drip_top),
+                    (drip_x, drip_bot),
+                    drip_width,
+                )
+                # Drip blob at the bottom
+                pygame.draw.circle(
+                    surface, (180, 0, 0), (drip_x, drip_bot), drip_width + 1
+                )
+
+    # === THE SCARY BIRB BODY ===
+    body_w = int(size * 1.2)
+    body_h = int(size * 1.3)
+    body_color = (25, 15, 30)
+    # Main body - takes up almost the whole screen
     pygame.draw.ellipse(
         surface,
         body_color,
         (cx - body_w // 2, cy - body_h // 3, body_w, body_h),
     )
+    # Darker shadow around the edges
+    pygame.draw.ellipse(
+        surface,
+        (15, 5, 15),
+        (cx - body_w // 2, cy - body_h // 3, body_w, body_h),
+        max(3, size // 20),
+    )
 
-    # Spiky hair on top (jagged, scary!)
+    # === HORRIFYING SPIKY HAIR (more spikes, taller, more jagged) ===
     spike_base_y = cy - body_h // 3
-    num_spikes = 7
+    num_spikes = 11
     for i in range(num_spikes):
-        spike_x = cx - size // 3 + i * (size * 2 // 3) // max(1, num_spikes - 1)
-        spike_h = random.randint(size // 5, size // 3)
-        spike_w = size // 10
+        spike_x = cx - size // 2 + i * size // max(1, num_spikes - 1)
+        spike_h = random.randint(size // 3, size // 2)
+        spike_w = random.randint(size // 14, size // 8)
+        # Each spike is slightly different shade of near-black
+        spike_color = (
+            random.randint(10, 30),
+            random.randint(5, 15),
+            random.randint(15, 35),
+        )
         pygame.draw.polygon(
             surface,
-            (20, 15, 30),
+            spike_color,
             [
-                (spike_x - spike_w, spike_base_y + 5),
-                (spike_x + random.randint(-3, 3), spike_base_y - spike_h),
-                (spike_x + spike_w, spike_base_y + 5),
+                (spike_x - spike_w, spike_base_y + 8),
+                (spike_x + random.randint(-5, 5), spike_base_y - spike_h),
+                (spike_x + spike_w, spike_base_y + 8),
             ],
         )
 
-    # EYES - big, angry, glowing red!
-    eye_y = cy + size // 12
-    eye_spacing = size // 4
-    eye_size = size // 6
+    # === EYES - HUGE, GLOWING, PULSATING ===
+    eye_y = cy + size // 15
+    eye_spacing = int(size * 0.28)
+    eye_size = size // 5
 
-    # Left eye (angry red glow)
-    pygame.draw.circle(surface, (180, 0, 0), (cx - eye_spacing, eye_y), eye_size + 4)
-    pygame.draw.circle(surface, (255, 20, 20), (cx - eye_spacing, eye_y), eye_size)
-    # Tiny pupil (makes it scarier)
-    pygame.draw.circle(surface, (0, 0, 0), (cx - eye_spacing, eye_y), eye_size // 3)
-    # Angry eyebrow
+    # Eye glow pulses like a heartbeat
+    pulse = abs(math.sin(frame * 0.15)) * 0.4 + 0.6
+    glow_size = int(eye_size * (1.3 + pulse * 0.3))
+
+    for eye_x in [cx - eye_spacing, cx + eye_spacing]:
+        # Outer glow (pulsating red haze)
+        glow_surf = pygame.Surface((glow_size * 4, glow_size * 4), pygame.SRCALPHA)
+        for ring in range(glow_size, 0, -2):
+            alpha = max(0, min(255, int(60 * (1.0 - ring / glow_size) * pulse)))
+            pygame.draw.circle(
+                glow_surf,
+                (255, 0, 0, alpha),
+                (glow_size * 2, glow_size * 2),
+                ring,
+            )
+        surface.blit(glow_surf, (eye_x - glow_size * 2, eye_y - glow_size * 2))
+
+        # Outer eye ring (dark red)
+        pygame.draw.circle(surface, (140, 0, 0), (eye_x, eye_y), eye_size + 6)
+        # Main eye (bright blood red)
+        pygame.draw.circle(
+            surface,
+            (int(255 * pulse), 0, 0),
+            (eye_x, eye_y),
+            eye_size,
+        )
+        # Veiny eye (cracked red lines radiating from pupil)
+        num_veins = 8
+        for v in range(num_veins):
+            vein_angle = v * (2 * math.pi / num_veins) + random.uniform(-0.2, 0.2)
+            vein_len = eye_size * random.uniform(0.5, 0.95)
+            vx = eye_x + int(math.cos(vein_angle) * vein_len)
+            vy = eye_y + int(math.sin(vein_angle) * vein_len)
+            pygame.draw.line(surface, (100, 0, 0), (eye_x, eye_y), (vx, vy), 1)
+        # Tiny pinpoint pupil (way too small - creepy!)
+        pupil_size = max(2, eye_size // 6)
+        pygame.draw.circle(surface, (0, 0, 0), (eye_x, eye_y), pupil_size)
+        # Bright white glint (makes the eyes look alive and staring)
+        glint_x = eye_x - pupil_size
+        glint_y = eye_y - pupil_size
+        pygame.draw.circle(
+            surface, (255, 200, 200), (glint_x, glint_y), max(1, pupil_size // 2)
+        )
+
+    # Angry eyebrows (thicker, more aggressive)
+    brow_thick = max(3, size // 25)
     pygame.draw.line(
         surface,
-        (20, 10, 10),
-        (cx - eye_spacing - eye_size, eye_y - eye_size - 4),
-        (cx - eye_spacing + eye_size, eye_y - eye_size + 6),
-        max(2, size // 40),
+        (10, 0, 0),
+        (cx - eye_spacing - eye_size - 5, eye_y - eye_size - 8),
+        (cx - eye_spacing + eye_size + 5, eye_y - eye_size + 12),
+        brow_thick,
     )
-
-    # Right eye
-    pygame.draw.circle(surface, (180, 0, 0), (cx + eye_spacing, eye_y), eye_size + 4)
-    pygame.draw.circle(surface, (255, 20, 20), (cx + eye_spacing, eye_y), eye_size)
-    pygame.draw.circle(surface, (0, 0, 0), (cx + eye_spacing, eye_y), eye_size // 3)
-    # Angry eyebrow
     pygame.draw.line(
         surface,
-        (20, 10, 10),
-        (cx + eye_spacing - eye_size, eye_y - eye_size + 6),
-        (cx + eye_spacing + eye_size, eye_y - eye_size - 4),
-        max(2, size // 40),
+        (10, 0, 0),
+        (cx + eye_spacing - eye_size - 5, eye_y - eye_size + 12),
+        (cx + eye_spacing + eye_size + 5, eye_y - eye_size - 8),
+        brow_thick,
     )
 
-    # === THE MOUTH - WIDE OPEN WITH SHARP BLOODY TEETH ===
-    mouth_y = cy + size // 3
-    mouth_w = int(size * 0.7)
-    mouth_h = int(size * 0.45)
+    # === THE MOUTH - MASSIVE, GAPING, FULL OF TEETH ===
+    mouth_y = cy + int(size * 0.35)
+    mouth_w = int(size * 0.85)
+    mouth_h = int(size * 0.55)
 
-    # Mouth opening (dark gaping hole)
+    # The mouth OPENS WIDER over time (jaw drops)
+    jaw_open = min(1.0, frame / 20.0)
+    mouth_h = int(mouth_h * (0.6 + jaw_open * 0.4))
+
+    # Gaping dark void (the throat)
     pygame.draw.ellipse(
         surface,
-        (30, 0, 0),
+        (15, 0, 0),
         (cx - mouth_w // 2, mouth_y - mouth_h // 4, mouth_w, mouth_h),
     )
-    # Inner mouth (red/dark red throat)
-    inner_w = int(mouth_w * 0.7)
-    inner_h = int(mouth_h * 0.6)
+    # Red fleshy inside
+    inner_w = int(mouth_w * 0.75)
+    inner_h = int(mouth_h * 0.65)
     pygame.draw.ellipse(
         surface,
-        (100, 10, 10),
-        (cx - inner_w // 2, mouth_y + mouth_h // 8, inner_w, inner_h),
+        (120, 5, 5),
+        (cx - inner_w // 2, mouth_y + mouth_h // 10, inner_w, inner_h),
     )
+    # Dark throat hole in the center
+    throat_r = max(8, size // 10)
+    pygame.draw.circle(surface, (5, 0, 0), (cx, mouth_y + mouth_h // 3), throat_r)
 
-    # SHARP TEETH - TOP ROW
-    num_teeth = 9
+    # === TEETH - MORE OF THEM, SHARPER, BLOODIER ===
+    num_teeth = 13
     tooth_w = mouth_w // (num_teeth + 1)
-    for i in range(num_teeth):
-        tx = (
-            cx
-            - mouth_w // 2
-            + tooth_w // 2
-            + i * (mouth_w - tooth_w) // max(1, num_teeth - 1)
-        )
-        # Teeth are triangular and jagged
-        tooth_h = random.randint(size // 8, size // 5)
-        # White-ish tooth with blood
-        tooth_color = (240, 235, 220)
-        pygame.draw.polygon(
-            surface,
-            tooth_color,
-            [
-                (tx - tooth_w // 2, mouth_y - mouth_h // 8),
-                (tx + random.randint(-2, 2), mouth_y - mouth_h // 8 + tooth_h),
-                (tx + tooth_w // 2, mouth_y - mouth_h // 8),
-            ],
-        )
-        # Blood dripping from some teeth!
-        if random.random() > 0.4:
-            blood_len = random.randint(size // 12, size // 6)
-            pygame.draw.line(
-                surface,
-                (180, 0, 0),
-                (tx, mouth_y - mouth_h // 8 + tooth_h),
-                (
-                    tx + random.randint(-3, 3),
-                    mouth_y - mouth_h // 8 + tooth_h + blood_len,
-                ),
-                max(1, size // 80),
-            )
 
-    # SHARP TEETH - BOTTOM ROW (pointing up)
+    # TOP ROW (pointing down)
     for i in range(num_teeth):
         tx = (
             cx
@@ -3481,76 +3548,170 @@ def draw_jumpscare(surface, frame):
             + tooth_w // 2
             + i * (mouth_w - tooth_w) // max(1, num_teeth - 1)
         )
-        tooth_h = random.randint(size // 8, size // 5)
-        tooth_color = (235, 230, 215)
-        bottom_y = mouth_y + mouth_h - mouth_h // 4
+        tooth_h = random.randint(size // 6, size // 3)
+        # Alternate between white and yellowish teeth
+        if i % 3 == 0:
+            tooth_color = (220, 210, 180)  # yellowed
+        else:
+            tooth_color = (245, 240, 230)
+        # Jagged triangle tooth
+        jag = random.randint(-3, 3)
         pygame.draw.polygon(
             surface,
             tooth_color,
             [
-                (tx - tooth_w // 2, bottom_y),
-                (tx + random.randint(-2, 2), bottom_y - tooth_h),
-                (tx + tooth_w // 2, bottom_y),
+                (tx - tooth_w // 2 - 1, mouth_y - mouth_h // 8),
+                (tx + jag, mouth_y - mouth_h // 8 + tooth_h),
+                (tx + tooth_w // 2 + 1, mouth_y - mouth_h // 8),
             ],
         )
-        # More blood!
-        if random.random() > 0.5:
-            blood_len = random.randint(size // 15, size // 8)
+        # Dark crack line on each tooth
+        pygame.draw.line(
+            surface,
+            (180, 170, 150),
+            (tx, mouth_y - mouth_h // 8 + 2),
+            (tx + jag, mouth_y - mouth_h // 8 + tooth_h - 2),
+            1,
+        )
+        # Blood dripping from EVERY tooth
+        blood_len = random.randint(size // 8, size // 3)
+        blood_width = random.randint(1, max(2, size // 60))
+        pygame.draw.line(
+            surface,
+            (random.randint(140, 200), 0, 0),
+            (tx + jag, mouth_y - mouth_h // 8 + tooth_h),
+            (
+                tx + jag + random.randint(-4, 4),
+                mouth_y - mouth_h // 8 + tooth_h + blood_len,
+            ),
+            blood_width,
+        )
+
+    # BOTTOM ROW (pointing up)
+    for i in range(num_teeth):
+        tx = (
+            cx
+            - mouth_w // 2
+            + tooth_w // 2
+            + i * (mouth_w - tooth_w) // max(1, num_teeth - 1)
+        )
+        tooth_h = random.randint(size // 6, size // 3)
+        tooth_color = (235, 230, 215) if i % 2 == 0 else (215, 200, 170)
+        bottom_y = mouth_y + mouth_h - mouth_h // 4
+        jag = random.randint(-3, 3)
+        pygame.draw.polygon(
+            surface,
+            tooth_color,
+            [
+                (tx - tooth_w // 2 - 1, bottom_y),
+                (tx + jag, bottom_y - tooth_h),
+                (tx + tooth_w // 2 + 1, bottom_y),
+            ],
+        )
+        # Blood going up
+        if random.random() > 0.3:
+            blood_len = random.randint(size // 10, size // 5)
             pygame.draw.line(
                 surface,
                 (200, 10, 10),
-                (tx, bottom_y - tooth_h),
-                (tx + random.randint(-2, 2), bottom_y - tooth_h - blood_len),
-                max(1, size // 80),
+                (tx + jag, bottom_y - tooth_h),
+                (tx + jag + random.randint(-3, 3), bottom_y - tooth_h - blood_len),
+                max(1, size // 70),
             )
 
-    # Beak edges (orange beak outline around mouth area)
-    beak_color = (200, 120, 20)
-    # Upper beak
+    # Beak edges (thick, cracked-looking)
+    beak_color = (180, 100, 10)
+    beak_thick = max(3, size // 30)
     pygame.draw.arc(
         surface,
         beak_color,
-        (cx - mouth_w // 2 - 5, mouth_y - mouth_h // 2, mouth_w + 10, mouth_h // 2),
+        (cx - mouth_w // 2 - 8, mouth_y - mouth_h // 2, mouth_w + 16, mouth_h // 2),
         0,
         math.pi,
-        max(2, size // 50),
+        beak_thick,
     )
-    # Lower beak
     pygame.draw.arc(
         surface,
         beak_color,
-        (cx - mouth_w // 2 - 5, mouth_y + mouth_h // 2, mouth_w + 10, mouth_h // 2),
+        (cx - mouth_w // 2 - 8, mouth_y + mouth_h // 2, mouth_w + 16, mouth_h // 2),
         math.pi,
         math.pi * 2,
-        max(2, size // 50),
+        beak_thick,
     )
 
-    # Blood splatter around the mouth
-    for _ in range(8):
-        bx = cx + random.randint(-mouth_w // 2, mouth_w // 2)
-        by = mouth_y + random.randint(-mouth_h // 3, mouth_h)
-        br = random.randint(2, max(3, size // 40))
-        pygame.draw.circle(surface, (180, 0, 0), (bx, by), br)
+    # === MASSIVE BLOOD SPLATTER EVERYWHERE ===
+    for _ in range(20):
+        bx = cx + random.randint(-mouth_w, mouth_w)
+        by = mouth_y + random.randint(-mouth_h, mouth_h)
+        br = random.randint(3, max(6, size // 25))
+        blood_c = (random.randint(130, 220), 0, 0)
+        pygame.draw.circle(surface, blood_c, (bx, by), br)
+    # Blood streaks across the face
+    for _ in range(6):
+        sx = cx + random.randint(-size // 2, size // 2)
+        sy = cy + random.randint(-size // 4, size // 2)
+        ex = sx + random.randint(-60, 60)
+        ey = sy + random.randint(20, 80)
+        pygame.draw.line(surface, (160, 0, 0), (sx, sy), (ex, ey), random.randint(2, 5))
 
-    # Scary text that shakes!
-    scare_font = pygame.font.Font(None, max(24, size // 4))
-    scare_text = scare_font.render("AAAAAHHH!!!", True, (255, 30, 30))
-    text_x = sw // 2 - scare_text.get_width() // 2 + random.randint(-5, 5)
-    text_y = 40 + random.randint(-3, 3)
-    # Shadow
-    scare_shadow = scare_font.render("AAAAAHHH!!!", True, (80, 0, 0))
-    surface.blit(scare_shadow, (text_x + 2, text_y + 2))
-    surface.blit(scare_text, (text_x, text_y))
-
-    # Second text at bottom
-    if frame > 20:
-        sub_font = pygame.font.Font(None, max(20, size // 6))
-        sub_text = sub_font.render(
-            "A BIRB WAS HIDING IN THE CLOSET!", True, (255, 100, 100)
+    # === SCARY TEXT - BIGGER, MORE FRANTIC ===
+    # Multiple scary messages that appear at different times
+    if frame > 5:
+        scare_font = pygame.font.Font(None, max(36, size // 3))
+        # The text gets BIGGER as the birb gets closer
+        messages = ["AAAAAHHH!!!", "SCREEEEECH!", "GET OUT!!!", "RAAAAWWW!!!"]
+        msg_idx = (frame // 20) % len(messages)
+        msg = messages[msg_idx]
+        scare_text = scare_font.render(
+            msg, True, (255, random.randint(0, 40), random.randint(0, 20))
         )
-        sub_x = sw // 2 - sub_text.get_width() // 2 + random.randint(-3, 3)
-        sub_y = sh - 80 + random.randint(-2, 2)
+        text_x = sw // 2 - scare_text.get_width() // 2 + random.randint(-12, 12)
+        text_y = 30 + random.randint(-8, 8)
+        # Glitchy shadow (offset more)
+        scare_shadow = scare_font.render(msg, True, (80, 0, 0))
+        surface.blit(
+            scare_shadow, (text_x + random.randint(1, 5), text_y + random.randint(1, 5))
+        )
+        surface.blit(scare_text, (text_x, text_y))
+
+    # Bottom text
+    if frame > 15:
+        sub_font = pygame.font.Font(None, max(24, size // 5))
+        sub_text = sub_font.render(
+            "IT WAS IN THE CLOSET THE WHOLE TIME...", True, (255, 80, 80)
+        )
+        sub_x = sw // 2 - sub_text.get_width() // 2 + random.randint(-6, 6)
+        sub_y = sh - 70 + random.randint(-4, 4)
         surface.blit(sub_text, (sub_x, sub_y))
+
+    # === GLITCH EFFECT (random horizontal screen tears) ===
+    if frame > 10 and frame % 2 == 0:
+        num_tears = random.randint(2, 6)
+        for _ in range(num_tears):
+            tear_y = random.randint(0, sh)
+            tear_h = random.randint(2, 8)
+            tear_offset = random.randint(-30, 30)
+            # Copy a strip and shift it sideways
+            if 0 < tear_y < sh - tear_h:
+                strip = surface.subsurface((0, tear_y, sw, tear_h)).copy()
+                surface.blit(strip, (tear_offset, tear_y))
+
+    # === RED VIGNETTE (dark edges, bright center - traps your vision) ===
+    vig_surf = pygame.Surface((sw, sh), pygame.SRCALPHA)
+    for ring in range(0, max(sw, sh), 8):
+        alpha = min(200, ring * 200 // max(sw, sh))
+        pygame.draw.rect(
+            vig_surf, (0, 0, 0, alpha), (ring // 2, ring // 2, sw - ring, sh - ring), 4
+        )
+    surface.blit(vig_surf, (0, 0))
+
+    # === FINAL FLASH before it ends (frames 130-150) ===
+    if frame > 130:
+        fade_out = (frame - 130) / 20.0
+        flash_surf = pygame.Surface((sw, sh))
+        flash_surf.fill((0, 0, 0))
+        flash_surf.set_alpha(min(255, int(fade_out * 255)))
+        surface.blit(flash_surf, (0, 0))
 
 
 # ============================================================
@@ -3606,7 +3767,7 @@ chips_collected = 0
 # When you open a closet and get unlucky, a scary birb jumps out!
 jumpscare_timer = 0  # frames remaining for jump scare (0 = not active)
 jumpscare_frame = 0  # animation frame counter for the scare
-JUMPSCARE_DURATION = 90  # 1.5 seconds at 60fps
+JUMPSCARE_DURATION = 150  # 2.5 seconds at 60fps - longer = scarier!
 closet_msg_timer = 0  # frames to show "found chips!" message
 
 # ============================================================
