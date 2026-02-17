@@ -3892,7 +3892,6 @@ def draw_shop(surface):
     )
 
 
-
 async def main():
     """Main game loop, async for Pygbag web support."""
     global running, burrb_x, burrb_y, burrb_angle, facing_left
@@ -3949,7 +3948,10 @@ async def main():
                     if event.key == pygame.K_RETURN:
                         # Try to buy the selected ability!
                         cost = ABILITIES[shop_cursor][1]
-                        if not ability_unlocked[shop_cursor] and chips_collected >= cost:
+                        if (
+                            not ability_unlocked[shop_cursor]
+                            and chips_collected >= cost
+                        ):
                             chips_collected -= cost
                             ability_unlocked[shop_cursor] = True
                     # Skip all other game input when shop is open
@@ -4005,10 +4007,11 @@ async def main():
                                 bld.closet_opened = True
                                 # 10% chance of jump scare, 90% chance of 2 chips!
                                 if random.random() < 0.1:
-                                    # JUMP SCARE!
+                                    # JUMP SCARE! Lose 1 chip!
                                     bld.closet_jumpscare = True
                                     jumpscare_timer = JUMPSCARE_DURATION
                                     jumpscare_frame = 0
+                                    chips_collected = max(0, chips_collected - 1)
                                 else:
                                     # Found 2 chips!
                                     chips_collected += 2
@@ -4644,10 +4647,14 @@ async def main():
 
             # Draw NPCs as billboard sprites in 3D with depth testing!
             # They properly hide behind walls now, just like in Doom!
-            draw_npcs_first_person(screen, burrb_x, burrb_y, burrb_angle, npcs, depth_buf)
+            draw_npcs_first_person(
+                screen, burrb_x, burrb_y, burrb_angle, npcs, depth_buf
+            )
 
             # Draw cars as billboard sprites in 3D with depth testing!
-            draw_cars_first_person(screen, burrb_x, burrb_y, burrb_angle, cars, depth_buf)
+            draw_cars_first_person(
+                screen, burrb_x, burrb_y, burrb_angle, cars, depth_buf
+            )
 
             # Draw the minimap in the corner so you don't get lost
             draw_minimap(screen, burrb_x, burrb_y, burrb_angle)
@@ -4717,7 +4724,10 @@ async def main():
                     screen, (220, 60, 80), (tongue_end_x, tongue_end_y), tip_r
                 )
                 pygame.draw.circle(
-                    screen, (255, 120, 140), (tongue_end_x, tongue_end_y), max(1, tip_r - 2)
+                    screen,
+                    (255, 120, 140),
+                    (tongue_end_x, tongue_end_y),
+                    max(1, tip_r - 2),
                 )
 
         else:
@@ -4806,7 +4816,9 @@ async def main():
                 blit_y = int(burrb_y - cam_y - new_h // 2)
                 screen.blit(temp_surf, (blit_x, blit_y))
             else:
-                draw_burrb(screen, burrb_x, burrb_y, cam_x, cam_y, facing_left, walk_frame)
+                draw_burrb(
+                    screen, burrb_x, burrb_y, cam_x, cam_y, facing_left, walk_frame
+                )
 
             # Dash trail effect!
             if dash_active > 0:
@@ -4880,13 +4892,9 @@ async def main():
             mode_text = font.render("[INSIDE]", True, YELLOW)
             mode_shadow = font.render("[INSIDE]", True, BLACK)
             if first_person:
-                help_msg = (
-                    "A/D turn, W/S walk  |  E take/exit  |  SPACE toggle view  |  ESC quit"
-                )
+                help_msg = "A/D turn, W/S walk  |  E take/exit  |  SPACE toggle view  |  ESC quit"
             else:
-                help_msg = (
-                    "Arrows/WASD walk  |  E take/exit  |  SPACE toggle view  |  ESC quit"
-                )
+                help_msg = "Arrows/WASD walk  |  E take/exit  |  SPACE toggle view  |  ESC quit"
         elif first_person:
             mode_text = font.render("[FIRST PERSON]", True, BURRB_ORANGE)
             mode_shadow = font.render("[FIRST PERSON]", True, BLACK)
@@ -4909,7 +4917,9 @@ async def main():
             screen.blit(chip_text, (chip_x_pos, 10))
             # Little chip bag icon next to the counter
             icon_x = chip_x_pos - 16
-            pygame.draw.rect(screen, (220, 160, 30), (icon_x, 8, 12, 16), border_radius=2)
+            pygame.draw.rect(
+                screen, (220, 160, 30), (icon_x, 8, 12, 16), border_radius=2
+            )
             pygame.draw.rect(screen, (200, 40, 40), (icon_x, 14, 12, 5))
             pygame.draw.rect(
                 screen, (150, 100, 20), (icon_x, 8, 12, 16), 1, border_radius=2
@@ -4922,7 +4932,9 @@ async def main():
         if freeze_timer > 0:
             active_abilities.append(("FREEZE", (100, 180, 255), freeze_timer, 300))
         if invisible_timer > 0:
-            active_abilities.append(("INVISIBLE", (180, 140, 255), invisible_timer, 300))
+            active_abilities.append(
+                ("INVISIBLE", (180, 140, 255), invisible_timer, 300)
+            )
         if giant_timer > 0:
             active_abilities.append(("GIANT", (255, 140, 60), giant_timer, 480))
         if dash_active > 0:
@@ -4933,7 +4945,9 @@ async def main():
             passive_badges.append(("SPD", (100, 255, 100)))
         if ability_unlocked[2]:  # Mega Tongue
             passive_badges.append(("TNG", (255, 120, 160)))
-        if ability_unlocked[0] and not ability_unlocked[1]:  # Dash (only if no super speed)
+        if (
+            ability_unlocked[0] and not ability_unlocked[1]
+        ):  # Dash (only if no super speed)
             passive_badges.append(("DSH", (255, 255, 100)))
 
         for ab_name, ab_color, ab_timer, ab_max in active_abilities:
