@@ -49,13 +49,71 @@ BURRB_EYE = (20, 40, 80)
 # ============================================================
 # The world is much bigger than the screen - that's what makes
 # it "open world"! The camera follows the burrb around.
-WORLD_WIDTH = 3200
-WORLD_HEIGHT = 3200
+WORLD_WIDTH = 10000
+WORLD_HEIGHT = 10000
 
 # City grid settings
 BLOCK_SIZE = 200  # each city block is 200x200 pixels (smaller = denser city)
 ROAD_WIDTH = 70  # wider roads for more cement
 SIDEWALK_WIDTH = 24  # wider sidewalks
+
+# ============================================================
+# BIOMES - different areas of the world!
+# ============================================================
+# The world is split into 5 biomes:
+#   Forest (top-left), Snow (top-right), City (center),
+#   Swamp (bottom-left), Desert (bottom-right)
+#
+# Layout (roughly):
+#   +-----------+-----------+
+#   |  FOREST   |   SNOW    |
+#   |           |           |
+#   +-----+----+----+------+
+#   |     |  CITY   |      |
+#   |     |         |      |
+#   +-----+----+----+------+
+#   |  SWAMP   |  DESERT   |
+#   |          |            |
+#   +----------+-----------+
+
+BIOME_CITY = "city"
+BIOME_FOREST = "forest"
+BIOME_DESERT = "desert"
+BIOME_SNOW = "snow"
+BIOME_SWAMP = "swamp"
+
+# City occupies the center chunk of the map
+CITY_X1 = 3000
+CITY_Y1 = 3000
+CITY_X2 = 7000
+CITY_Y2 = 7000
+
+# Ground colors for each biome
+BIOME_COLORS = {
+    BIOME_CITY: (190, 185, 175),  # cement gray
+    BIOME_FOREST: (80, 140, 55),  # lush green grass
+    BIOME_DESERT: (220, 190, 130),  # warm sand
+    BIOME_SNOW: (230, 235, 245),  # bright white snow
+    BIOME_SWAMP: (60, 80, 50),  # dark murky green
+}
+
+
+def get_biome(x, y):
+    """Figure out which biome a world position is in."""
+    # City is the center rectangle
+    if CITY_X1 <= x <= CITY_X2 and CITY_Y1 <= y <= CITY_Y2:
+        return BIOME_CITY
+    # Top-left = Forest
+    if x < WORLD_WIDTH // 2 and y < WORLD_HEIGHT // 2:
+        return BIOME_FOREST
+    # Top-right = Snow
+    if x >= WORLD_WIDTH // 2 and y < WORLD_HEIGHT // 2:
+        return BIOME_SNOW
+    # Bottom-left = Swamp
+    if x < WORLD_WIDTH // 2 and y >= WORLD_HEIGHT // 2:
+        return BIOME_SWAMP
+    # Bottom-right = Desert
+    return BIOME_DESERT
 
 
 # ============================================================
@@ -391,11 +449,11 @@ building_colors = [
     ((255, 200, 255), (220, 160, 220)),  # light purple/pink
 ]
 
-random.seed(42)  # Same city every time you play
+random.seed(42)  # Same world every time you play
 
-# Create city blocks in a grid pattern
-for bx in range(0, WORLD_WIDTH, BLOCK_SIZE + ROAD_WIDTH):
-    for by in range(0, WORLD_HEIGHT, BLOCK_SIZE + ROAD_WIDTH):
+# Create city blocks in a grid pattern (ONLY in the city biome!)
+for bx in range(CITY_X1, CITY_X2, BLOCK_SIZE + ROAD_WIDTH):
+    for by in range(CITY_Y1, CITY_Y2, BLOCK_SIZE + ROAD_WIDTH):
         # Each block gets 3-6 buildings (more packed!)
         num_buildings = random.randint(3, 6)
         for _ in range(num_buildings):
@@ -434,12 +492,12 @@ for bx in range(0, WORLD_WIDTH, BLOCK_SIZE + ROAD_WIDTH):
 
 
 # ============================================================
-# PARKS - a few open green areas
+# PARKS - a few open green areas (in the city)
 # ============================================================
 parks = []
-for _ in range(3):
-    px = random.randint(200, WORLD_WIDTH - 400)
-    py = random.randint(200, WORLD_HEIGHT - 400)
+for _ in range(5):
+    px = random.randint(CITY_X1 + 200, CITY_X2 - 400)
+    py = random.randint(CITY_Y1 + 200, CITY_Y2 - 400)
     pw = random.randint(120, 220)
     ph = random.randint(120, 220)
     parks.append(pygame.Rect(px, py, pw, ph))
@@ -454,6 +512,104 @@ for _ in range(3):
         tx = random.randint(px + 20, px + pw - 20)
         ty = random.randint(py + 20, py + ph - 20)
         trees.append((tx, ty, random.randint(14, 24)))
+
+
+# ============================================================
+# BIOME DECORATIONS - trees and objects for each biome!
+# ============================================================
+# Each biome gets its own flavor of nature and decorations.
+# We store them as (x, y, kind, size) tuples.
+# "kind" tells the drawing code what to draw.
+biome_objects = []  # list of (x, y, kind, size)
+
+# --- FOREST biome (top-left): lots of big trees, mushrooms, flowers ---
+for _ in range(300):
+    fx = random.randint(100, WORLD_WIDTH // 2 - 100)
+    fy = random.randint(100, WORLD_HEIGHT // 2 - 100)
+    # Don't put forest stuff in the city
+    if CITY_X1 - 50 < fx < CITY_X2 + 50 and CITY_Y1 - 50 < fy < CITY_Y2 + 50:
+        continue
+    trees.append((fx, fy, random.randint(16, 30)))
+
+for _ in range(60):
+    fx = random.randint(100, WORLD_WIDTH // 2 - 100)
+    fy = random.randint(100, WORLD_HEIGHT // 2 - 100)
+    if CITY_X1 - 50 < fx < CITY_X2 + 50 and CITY_Y1 - 50 < fy < CITY_Y2 + 50:
+        continue
+    biome_objects.append((fx, fy, "mushroom", random.randint(6, 12)))
+
+for _ in range(40):
+    fx = random.randint(100, WORLD_WIDTH // 2 - 100)
+    fy = random.randint(100, WORLD_HEIGHT // 2 - 100)
+    if CITY_X1 - 50 < fx < CITY_X2 + 50 and CITY_Y1 - 50 < fy < CITY_Y2 + 50:
+        continue
+    biome_objects.append((fx, fy, "flower", random.randint(4, 8)))
+
+# --- SNOW biome (top-right): snowy trees, snowmen, ice patches ---
+for _ in range(200):
+    sx = random.randint(WORLD_WIDTH // 2 + 100, WORLD_WIDTH - 100)
+    sy = random.randint(100, WORLD_HEIGHT // 2 - 100)
+    if CITY_X1 - 50 < sx < CITY_X2 + 50 and CITY_Y1 - 50 < sy < CITY_Y2 + 50:
+        continue
+    biome_objects.append((sx, sy, "snow_tree", random.randint(14, 26)))
+
+for _ in range(25):
+    sx = random.randint(WORLD_WIDTH // 2 + 200, WORLD_WIDTH - 200)
+    sy = random.randint(200, WORLD_HEIGHT // 2 - 200)
+    if CITY_X1 - 50 < sx < CITY_X2 + 50 and CITY_Y1 - 50 < sy < CITY_Y2 + 50:
+        continue
+    biome_objects.append((sx, sy, "snowman", random.randint(10, 16)))
+
+for _ in range(40):
+    sx = random.randint(WORLD_WIDTH // 2 + 100, WORLD_WIDTH - 100)
+    sy = random.randint(100, WORLD_HEIGHT // 2 - 100)
+    if CITY_X1 - 50 < sx < CITY_X2 + 50 and CITY_Y1 - 50 < sy < CITY_Y2 + 50:
+        continue
+    biome_objects.append((sx, sy, "ice_patch", random.randint(20, 50)))
+
+# --- SWAMP biome (bottom-left): dead trees, lily pads, puddles ---
+for _ in range(180):
+    wx = random.randint(100, WORLD_WIDTH // 2 - 100)
+    wy = random.randint(WORLD_HEIGHT // 2 + 100, WORLD_HEIGHT - 100)
+    if CITY_X1 - 50 < wx < CITY_X2 + 50 and CITY_Y1 - 50 < wy < CITY_Y2 + 50:
+        continue
+    biome_objects.append((wx, wy, "dead_tree", random.randint(12, 24)))
+
+for _ in range(80):
+    wx = random.randint(100, WORLD_WIDTH // 2 - 100)
+    wy = random.randint(WORLD_HEIGHT // 2 + 100, WORLD_HEIGHT - 100)
+    if CITY_X1 - 50 < wx < CITY_X2 + 50 and CITY_Y1 - 50 < wy < CITY_Y2 + 50:
+        continue
+    biome_objects.append((wx, wy, "lily_pad", random.randint(6, 14)))
+
+for _ in range(50):
+    wx = random.randint(100, WORLD_WIDTH // 2 - 100)
+    wy = random.randint(WORLD_HEIGHT // 2 + 100, WORLD_HEIGHT - 100)
+    if CITY_X1 - 50 < wx < CITY_X2 + 50 and CITY_Y1 - 50 < wy < CITY_Y2 + 50:
+        continue
+    biome_objects.append((wx, wy, "puddle", random.randint(15, 40)))
+
+# --- DESERT biome (bottom-right): cacti, rocks, tumbleweeds ---
+for _ in range(120):
+    dx = random.randint(WORLD_WIDTH // 2 + 100, WORLD_WIDTH - 100)
+    dy = random.randint(WORLD_HEIGHT // 2 + 100, WORLD_HEIGHT - 100)
+    if CITY_X1 - 50 < dx < CITY_X2 + 50 and CITY_Y1 - 50 < dy < CITY_Y2 + 50:
+        continue
+    biome_objects.append((dx, dy, "cactus", random.randint(10, 22)))
+
+for _ in range(80):
+    dx = random.randint(WORLD_WIDTH // 2 + 100, WORLD_WIDTH - 100)
+    dy = random.randint(WORLD_HEIGHT // 2 + 100, WORLD_HEIGHT - 100)
+    if CITY_X1 - 50 < dx < CITY_X2 + 50 and CITY_Y1 - 50 < dy < CITY_Y2 + 50:
+        continue
+    biome_objects.append((dx, dy, "rock", random.randint(8, 18)))
+
+for _ in range(30):
+    dx = random.randint(WORLD_WIDTH // 2 + 100, WORLD_WIDTH - 100)
+    dy = random.randint(WORLD_HEIGHT // 2 + 100, WORLD_HEIGHT - 100)
+    if CITY_X1 - 50 < dx < CITY_X2 + 50 and CITY_Y1 - 50 < dy < CITY_Y2 + 50:
+        continue
+    biome_objects.append((dx, dy, "tumbleweed", random.randint(6, 12)))
 
 
 # ============================================================
@@ -552,9 +708,9 @@ burrb_colors = [
     ((200, 60, 200), (160, 30, 160)),  # magenta burrb
 ]
 
-# Place NPCs on roads and sidewalks where they can walk freely
-# They're ALL burrbs - a whole city of burrbs!
-for _ in range(30):
+# Place NPCs across the whole world!
+# They're ALL burrbs - burrbs everywhere in every biome!
+for _ in range(80):
     # Pick a random spot in the world
     nx = random.randint(100, WORLD_WIDTH - 100)
     ny = random.randint(100, WORLD_HEIGHT - 100)
@@ -604,16 +760,16 @@ class Car:
         elif self.direction == 3:  # up
             self.y -= self.speed
 
-        # Wrap around when leaving the world (cars loop around)
+        # Wrap around when leaving the city (cars loop within city)
         margin = 50
-        if self.x > WORLD_WIDTH + margin:
-            self.x = -margin
-        elif self.x < -margin:
-            self.x = WORLD_WIDTH + margin
-        if self.y > WORLD_HEIGHT + margin:
-            self.y = -margin
-        elif self.y < -margin:
-            self.y = WORLD_HEIGHT + margin
+        if self.x > CITY_X2 + margin:
+            self.x = CITY_X1 - margin
+        elif self.x < CITY_X1 - margin:
+            self.x = CITY_X2 + margin
+        if self.y > CITY_Y2 + margin:
+            self.y = CITY_Y1 - margin
+        elif self.y < CITY_Y1 - margin:
+            self.y = CITY_Y2 + margin
 
         # Check if we're at an intersection and maybe turn
         self.turn_cooldown -= 1
@@ -623,12 +779,12 @@ class Car:
             # Intersections happen where horizontal and vertical roads cross
             near_h_road = False
             near_v_road = False
-            for bx in range(0, WORLD_WIDTH + step, step):
+            for bx in range(CITY_X1, CITY_X2 + step, step):
                 road_x = bx + BLOCK_SIZE
                 if abs(self.x - (road_x + ROAD_WIDTH // 2)) < 8:
                     near_v_road = True
                     break
-            for by in range(0, WORLD_HEIGHT + step, step):
+            for by in range(CITY_Y1, CITY_Y2 + step, step):
                 road_y = by + BLOCK_SIZE
                 if abs(self.y - (road_y + ROAD_WIDTH // 2)) < 8:
                     near_h_road = True
@@ -666,17 +822,17 @@ car_colors = [
     ((240, 140, 20), (200, 110, 10), "sport"),  # orange sports car
 ]
 
-# Spawn cars on roads
+# Spawn cars on city roads only
 cars = []
 step = BLOCK_SIZE + ROAD_WIDTH
 
-# Cars on horizontal roads
-for by in range(0, WORLD_HEIGHT, step):
+# Cars on horizontal roads (city only)
+for by in range(CITY_Y1, CITY_Y2, step):
     road_y = by + BLOCK_SIZE + ROAD_WIDTH // 2
     # Spawn several cars per road
     num_cars = random.randint(2, 4)
     for _ in range(num_cars):
-        cx = random.randint(50, WORLD_WIDTH - 50)
+        cx = random.randint(CITY_X1 + 50, CITY_X2 - 50)
         # Drive on the right side of the road
         direction = random.choice([0, 2])  # right or left
         if direction == 0:
@@ -686,12 +842,12 @@ for by in range(0, WORLD_HEIGHT, step):
         color, detail, ctype = random.choice(car_colors)
         cars.append(Car(cx, cy, direction, color, detail, ctype))
 
-# Cars on vertical roads
-for bx in range(0, WORLD_WIDTH, step):
+# Cars on vertical roads (city only)
+for bx in range(CITY_X1, CITY_X2, step):
     road_x = bx + BLOCK_SIZE + ROAD_WIDTH // 2
     num_cars = random.randint(2, 4)
     for _ in range(num_cars):
-        cy = random.randint(50, WORLD_HEIGHT - 50)
+        cy = random.randint(CITY_Y1 + 50, CITY_Y2 - 50)
         direction = random.choice([1, 3])  # down or up
         if direction == 1:
             cx = road_x + ROAD_WIDTH // 4  # right side
@@ -705,46 +861,52 @@ for bx in range(0, WORLD_WIDTH, step):
 # DRAW FUNCTIONS
 # ============================================================
 def draw_road_grid(surface, cam_x, cam_y):
-    """Draw the roads between city blocks."""
+    """Draw the roads between city blocks (only in the city biome!)."""
+    city_w = CITY_X2 - CITY_X1
+    city_h = CITY_Y2 - CITY_Y1
     # Horizontal roads
-    for by in range(0, WORLD_HEIGHT + BLOCK_SIZE, BLOCK_SIZE + ROAD_WIDTH):
+    for by in range(CITY_Y1, CITY_Y2 + BLOCK_SIZE, BLOCK_SIZE + ROAD_WIDTH):
         road_y = by + BLOCK_SIZE
         ry = road_y - cam_y
         # Road surface
-        pygame.draw.rect(surface, ROAD_COLOR, (-cam_x, ry, WORLD_WIDTH, ROAD_WIDTH))
+        pygame.draw.rect(surface, ROAD_COLOR, (CITY_X1 - cam_x, ry, city_w, ROAD_WIDTH))
         # Center line (dashed)
         center_y = ry + ROAD_WIDTH // 2
-        for dx in range(0, WORLD_WIDTH, 40):
+        for dx in range(CITY_X1, CITY_X2, 40):
             lx = dx - cam_x
             pygame.draw.rect(surface, ROAD_LINE, (lx, center_y - 1, 20, 3))
         # Sidewalks
         pygame.draw.rect(
             surface,
             SIDEWALK,
-            (-cam_x, ry - SIDEWALK_WIDTH, WORLD_WIDTH, SIDEWALK_WIDTH),
+            (CITY_X1 - cam_x, ry - SIDEWALK_WIDTH, city_w, SIDEWALK_WIDTH),
         )
         pygame.draw.rect(
-            surface, SIDEWALK, (-cam_x, ry + ROAD_WIDTH, WORLD_WIDTH, SIDEWALK_WIDTH)
+            surface,
+            SIDEWALK,
+            (CITY_X1 - cam_x, ry + ROAD_WIDTH, city_w, SIDEWALK_WIDTH),
         )
 
     # Vertical roads
-    for bx in range(0, WORLD_WIDTH + BLOCK_SIZE, BLOCK_SIZE + ROAD_WIDTH):
+    for bx in range(CITY_X1, CITY_X2 + BLOCK_SIZE, BLOCK_SIZE + ROAD_WIDTH):
         road_x = bx + BLOCK_SIZE
         rx = road_x - cam_x
-        pygame.draw.rect(surface, ROAD_COLOR, (rx, -cam_y, ROAD_WIDTH, WORLD_HEIGHT))
+        pygame.draw.rect(surface, ROAD_COLOR, (rx, CITY_Y1 - cam_y, ROAD_WIDTH, city_h))
         # Center line
         center_x = rx + ROAD_WIDTH // 2
-        for dy in range(0, WORLD_HEIGHT, 40):
+        for dy in range(CITY_Y1, CITY_Y2, 40):
             ly = dy - cam_y
             pygame.draw.rect(surface, ROAD_LINE, (center_x - 1, ly, 3, 20))
         # Sidewalks
         pygame.draw.rect(
             surface,
             SIDEWALK,
-            (rx - SIDEWALK_WIDTH, -cam_y, SIDEWALK_WIDTH, WORLD_HEIGHT),
+            (rx - SIDEWALK_WIDTH, CITY_Y1 - cam_y, SIDEWALK_WIDTH, city_h),
         )
         pygame.draw.rect(
-            surface, SIDEWALK, (rx + ROAD_WIDTH, -cam_y, SIDEWALK_WIDTH, WORLD_HEIGHT)
+            surface,
+            SIDEWALK,
+            (rx + ROAD_WIDTH, CITY_Y1 - cam_y, SIDEWALK_WIDTH, city_h),
         )
 
 
@@ -771,6 +933,262 @@ def draw_tree(surface, x, y, size, cam_x, cam_y):
     pygame.draw.circle(surface, GREEN, (sx + r // 3, leaf_y + r // 5), r - 2)
     pygame.draw.circle(surface, (90, 190, 70), (sx - r // 4, leaf_y - r // 3), r // 2)
     pygame.draw.circle(surface, (100, 200, 80), (sx + r // 5, leaf_y - r // 2), r // 3)
+
+
+def draw_biome_object(surface, x, y, kind, size, cam_x, cam_y):
+    """Draw a biome-specific decoration at the given world position."""
+    sx = int(x - cam_x)
+    sy = int(y - cam_y)
+    # Skip if off-screen
+    if sx < -60 or sx > SCREEN_WIDTH + 60 or sy < -60 or sy > SCREEN_HEIGHT + 60:
+        return
+
+    if kind == "mushroom":
+        # Red cap with white spots on a stubby stem
+        pygame.draw.rect(surface, (180, 160, 120), (sx - 2, sy, 4, size // 2))
+        pygame.draw.ellipse(
+            surface, (200, 40, 40), (sx - size // 2, sy - size // 3, size, size // 2)
+        )
+        # White spots
+        pygame.draw.circle(surface, (255, 255, 255), (sx - 2, sy - size // 5), 2)
+        pygame.draw.circle(surface, (255, 255, 255), (sx + 3, sy - size // 4), 1)
+
+    elif kind == "flower":
+        # Colorful flower with petals
+        stem_h = size
+        pygame.draw.line(surface, (60, 140, 40), (sx, sy), (sx, sy + stem_h), 2)
+        colors = [(255, 80, 80), (255, 200, 50), (200, 100, 255), (255, 150, 200)]
+        c = colors[(x + y) % len(colors)]
+        for angle_i in range(5):
+            a = angle_i * (math.pi * 2 / 5)
+            px = sx + int(math.cos(a) * size * 0.6)
+            py_pos = sy + int(math.sin(a) * size * 0.6)
+            pygame.draw.circle(surface, c, (px, py_pos), size // 3)
+        pygame.draw.circle(surface, (255, 220, 50), (sx, sy), size // 4)
+
+    elif kind == "snow_tree":
+        # Pine tree covered in snow
+        # Trunk
+        pygame.draw.rect(surface, (100, 70, 40), (sx - 2, sy + size // 3, 4, size // 2))
+        # Snowy pine layers (triangle shape, white-tipped)
+        for layer in range(3):
+            w = size - layer * 4
+            h = size // 4
+            ly = sy - layer * (size // 5) + size // 6
+            # Dark green pine
+            pts = [(sx, ly - h), (sx - w // 2, ly), (sx + w // 2, ly)]
+            pygame.draw.polygon(surface, (30, 80, 30), pts)
+            # Snow on top
+            snow_pts = [
+                (sx, ly - h),
+                (sx - w // 3, ly - h // 2),
+                (sx + w // 3, ly - h // 2),
+            ]
+            pygame.draw.polygon(surface, (240, 245, 255), snow_pts)
+
+    elif kind == "snowman":
+        # Three stacked circles with a hat and carrot nose!
+        # Bottom ball
+        pygame.draw.circle(surface, (240, 240, 250), (sx, sy + size // 2), size // 2)
+        # Middle ball
+        mid_r = size // 3
+        pygame.draw.circle(surface, (235, 235, 245), (sx, sy), mid_r)
+        # Head
+        head_r = size // 4
+        pygame.draw.circle(
+            surface, (230, 230, 240), (sx, sy - mid_r - head_r + 2), head_r
+        )
+        # Eyes
+        pygame.draw.circle(surface, (20, 20, 20), (sx - 3, sy - mid_r - head_r), 2)
+        pygame.draw.circle(surface, (20, 20, 20), (sx + 3, sy - mid_r - head_r), 2)
+        # Carrot nose
+        nose_y = sy - mid_r - head_r + 3
+        pygame.draw.polygon(
+            surface,
+            (255, 140, 30),
+            [(sx, nose_y), (sx + 6, nose_y + 2), (sx, nose_y + 3)],
+        )
+        # Hat
+        hat_y = sy - mid_r - head_r * 2 + 2
+        pygame.draw.rect(
+            surface, (30, 30, 30), (sx - head_r, hat_y + head_r // 2, head_r * 2, 3)
+        )
+        pygame.draw.rect(
+            surface, (30, 30, 30), (sx - head_r // 2, hat_y, head_r, head_r // 2 + 2)
+        )
+
+    elif kind == "ice_patch":
+        # Shiny blue-white oval on the ground
+        ice_surf = pygame.Surface((size * 2, size), pygame.SRCALPHA)
+        pygame.draw.ellipse(ice_surf, (180, 210, 240, 140), (0, 0, size * 2, size))
+        # Shine highlight
+        pygame.draw.ellipse(
+            ice_surf, (220, 240, 255, 100), (size // 3, size // 6, size, size // 2)
+        )
+        surface.blit(ice_surf, (sx - size, sy - size // 2))
+
+    elif kind == "dead_tree":
+        # Gray/brown trunk with no leaves, just bare branches
+        pygame.draw.line(
+            surface, (80, 60, 40), (sx, sy + size // 2), (sx, sy - size // 3), 3
+        )
+        # Branches
+        pygame.draw.line(
+            surface,
+            (70, 55, 35),
+            (sx, sy - size // 6),
+            (sx - size // 3, sy - size // 2),
+            2,
+        )
+        pygame.draw.line(
+            surface,
+            (70, 55, 35),
+            (sx, sy - size // 4),
+            (sx + size // 3, sy - size // 2 + 2),
+            2,
+        )
+        pygame.draw.line(
+            surface, (60, 50, 30), (sx, sy), (sx - size // 4, sy - size // 5), 1
+        )
+
+    elif kind == "lily_pad":
+        # Green circle with a little wedge cut out
+        pygame.draw.circle(surface, (40, 120, 40), (sx, sy), size // 2)
+        pygame.draw.circle(surface, (50, 140, 50), (sx - 1, sy - 1), size // 2 - 1)
+        # Little notch
+        pygame.draw.line(surface, (60, 80, 50), (sx, sy), (sx + size // 2, sy - 2), 2)
+
+    elif kind == "puddle":
+        # Murky dark water pool
+        puddle_surf = pygame.Surface((size * 2, size), pygame.SRCALPHA)
+        pygame.draw.ellipse(puddle_surf, (40, 55, 35, 160), (0, 0, size * 2, size))
+        pygame.draw.ellipse(
+            puddle_surf, (50, 65, 45, 80), (size // 4, size // 6, size, size // 2)
+        )
+        surface.blit(puddle_surf, (sx - size, sy - size // 2))
+
+    elif kind == "cactus":
+        # Green cactus with arms
+        # Main trunk
+        pygame.draw.rect(surface, (40, 140, 40), (sx - 3, sy - size // 2, 6, size))
+        pygame.draw.rect(surface, (50, 160, 50), (sx - 2, sy - size // 2, 4, size))
+        # Left arm
+        arm_y = sy - size // 4
+        pygame.draw.rect(
+            surface, (40, 140, 40), (sx - size // 3, arm_y - 3, size // 3, 6)
+        )
+        pygame.draw.rect(
+            surface, (40, 140, 40), (sx - size // 3, arm_y - size // 4, 6, size // 4)
+        )
+        # Right arm
+        arm_y2 = sy - size // 6
+        pygame.draw.rect(surface, (40, 140, 40), (sx, arm_y2 - 3, size // 3, 6))
+        pygame.draw.rect(
+            surface,
+            (40, 140, 40),
+            (sx + size // 3 - 6, arm_y2 - size // 3, 6, size // 3),
+        )
+
+    elif kind == "rock":
+        # Gray/brown rock
+        pts = [
+            (sx - size // 2, sy + size // 4),
+            (sx - size // 3, sy - size // 3),
+            (sx + size // 4, sy - size // 2),
+            (sx + size // 2, sy - size // 6),
+            (sx + size // 3, sy + size // 3),
+        ]
+        pygame.draw.polygon(surface, (140, 130, 120), pts)
+        pygame.draw.polygon(surface, (120, 110, 100), pts, 2)
+        # Highlight
+        pygame.draw.line(surface, (170, 160, 150), pts[1], pts[2], 1)
+
+    elif kind == "tumbleweed":
+        # Brown scribble ball
+        pygame.draw.circle(surface, (160, 130, 80), (sx, sy), size // 2)
+        pygame.draw.circle(surface, (140, 110, 60), (sx, sy), size // 2, 1)
+        # Scribble lines
+        for i in range(4):
+            a = i * 0.8
+            x1 = sx + int(math.cos(a) * size * 0.3)
+            y1 = sy + int(math.sin(a) * size * 0.3)
+            x2 = sx + int(math.cos(a + 2) * size * 0.3)
+            y2 = sy + int(math.sin(a + 2) * size * 0.3)
+            pygame.draw.line(surface, (120, 90, 50), (x1, y1), (x2, y2), 1)
+
+
+def draw_biome_ground(surface, cam_x, cam_y):
+    """Draw the ground color for each biome that's visible on screen."""
+    # Figure out which part of the world is visible
+    view_x1 = int(cam_x)
+    view_y1 = int(cam_y)
+    view_x2 = view_x1 + SCREEN_WIDTH
+    view_y2 = view_y1 + SCREEN_HEIGHT
+
+    # We'll paint the ground in chunks for performance
+    chunk = 100
+    for wx in range(
+        max(0, (view_x1 // chunk) * chunk), min(WORLD_WIDTH, view_x2 + chunk), chunk
+    ):
+        for wy in range(
+            max(0, (view_y1 // chunk) * chunk),
+            min(WORLD_HEIGHT, view_y2 + chunk),
+            chunk,
+        ):
+            biome = get_biome(wx + chunk // 2, wy + chunk // 2)
+            color = BIOME_COLORS[biome]
+            rx = wx - cam_x
+            ry = wy - cam_y
+            pygame.draw.rect(surface, color, (rx, ry, chunk + 1, chunk + 1))
+
+
+def draw_minimap(surface):
+    """Draw a small minimap in the corner so you don't get lost!"""
+    # Minimap size and position (bottom-left corner)
+    mm_w = 140
+    mm_h = 140
+    mm_x = 8
+    mm_y = SCREEN_HEIGHT - mm_h - 8
+    mm_scale_x = mm_w / WORLD_WIDTH
+    mm_scale_y = mm_h / WORLD_HEIGHT
+
+    # Background
+    mm_surf = pygame.Surface((mm_w, mm_h), pygame.SRCALPHA)
+
+    # Draw biome colors
+    mm_chunk = WORLD_WIDTH // 14  # ~714px chunks
+    for wx in range(0, WORLD_WIDTH, mm_chunk):
+        for wy in range(0, WORLD_HEIGHT, mm_chunk):
+            biome = get_biome(wx + mm_chunk // 2, wy + mm_chunk // 2)
+            color = BIOME_COLORS[biome]
+            rx = int(wx * mm_scale_x)
+            ry = int(wy * mm_scale_y)
+            rw = max(1, int(mm_chunk * mm_scale_x) + 1)
+            rh = max(1, int(mm_chunk * mm_scale_y) + 1)
+            pygame.draw.rect(mm_surf, color, (rx, ry, rw, rh))
+
+    # Draw buildings as tiny dots
+    for b in buildings:
+        bx = int(b.x * mm_scale_x)
+        by = int(b.y * mm_scale_y)
+        pygame.draw.rect(mm_surf, (100, 100, 100), (bx, by, 2, 2))
+
+    # Draw the player as a bright dot
+    px = int(burrb_x * mm_scale_x)
+    py = int(burrb_y * mm_scale_y)
+    pygame.draw.circle(mm_surf, (255, 50, 50), (px, py), 3)
+    pygame.draw.circle(mm_surf, (255, 200, 200), (px, py), 1)
+
+    # Border
+    pygame.draw.rect(mm_surf, (200, 200, 200), (0, 0, mm_w, mm_h), 2)
+
+    # Semi-transparent background behind minimap
+    bg_surf = pygame.Surface((mm_w + 4, mm_h + 4), pygame.SRCALPHA)
+    pygame.draw.rect(
+        bg_surf, (0, 0, 0, 120), (0, 0, mm_w + 4, mm_h + 4), border_radius=4
+    )
+    surface.blit(bg_surf, (mm_x - 2, mm_y - 2))
+    surface.blit(mm_surf, (mm_x, mm_y))
 
 
 def draw_burrb(surface, x, y, cam_x, cam_y, facing_left, walk_frame):
@@ -3568,16 +3986,21 @@ async def main():
 
         else:
             # ========== TOP-DOWN MODE (the original view) ==========
-            # Fill the background (cement/concrete color for the city)
-            screen.fill((190, 185, 175))
+            # Fill the background with biome colors
+            draw_biome_ground(screen, cam_x, cam_y)
 
-            # Draw parks
+            # Draw biome objects that are behind the burrb
+            for ox, oy, okind, osize in biome_objects:
+                if oy < burrb_y:
+                    draw_biome_object(screen, ox, oy, okind, osize, cam_x, cam_y)
+
+            # Draw parks (in the city)
             for park in parks:
                 pr = pygame.Rect(park.x - cam_x, park.y - cam_y, park.w, park.h)
                 pygame.draw.rect(screen, (100, 180, 80), pr, border_radius=12)
                 pygame.draw.rect(screen, DARK_GREEN, pr, 2, border_radius=12)
 
-            # Draw roads
+            # Draw roads (only in the city!)
             draw_road_grid(screen, cam_x, cam_y)
 
             # Draw cars on the roads
@@ -3783,6 +4206,28 @@ async def main():
             for tx, ty, tsize in trees:
                 if ty >= burrb_y:
                     draw_tree(screen, tx, ty, tsize, cam_x, cam_y)
+
+            # Draw biome objects in front of burrb
+            for ox, oy, okind, osize in biome_objects:
+                if oy >= burrb_y:
+                    draw_biome_object(screen, ox, oy, okind, osize, cam_x, cam_y)
+
+            # Show which biome we're in
+            cur_biome = get_biome(burrb_x, burrb_y)
+            biome_names = {
+                BIOME_CITY: "City",
+                BIOME_FOREST: "Forest",
+                BIOME_DESERT: "Desert",
+                BIOME_SNOW: "Snow",
+                BIOME_SWAMP: "Swamp",
+            }
+            biome_label = font.render(biome_names[cur_biome], True, (255, 255, 255))
+            biome_shadow = font.render(biome_names[cur_biome], True, (0, 0, 0))
+            screen.blit(biome_shadow, (SCREEN_WIDTH - biome_label.get_width() - 11, 41))
+            screen.blit(biome_label, (SCREEN_WIDTH - biome_label.get_width() - 12, 40))
+
+            # Minimap!
+            draw_minimap(screen)
 
         # --- UI overlay (shown in both modes) ---
         # Game title
