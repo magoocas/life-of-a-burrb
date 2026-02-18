@@ -73,6 +73,7 @@ class Building:
     SOFA = 4
     TV = 5
     CLOSET = 6
+    BED = 7
 
     def __init__(self, x, y, w, h, color, roof_color):
         self.x = x
@@ -166,6 +167,19 @@ class Building:
         self.closet_y = 0.0
         self.closet_jumpscare = False  # was this closet a jump scare?
 
+        # Bed! Every house has a bed. Shake it and maybe a monster appears!
+        self.bed_x = 0.0  # pixel position of bed center
+        self.bed_y = 0.0
+        self.bed_shaken = False  # has the bed been shaken?
+        self.bed_monster = False  # did a monster come out?
+
+        # The 6-legged monster that might live under the bed!
+        self.monster_active = False  # is the monster chasing the player?
+        self.monster_x = 0.0
+        self.monster_y = 0.0
+        self.monster_speed = 2.2  # faster than the resident!
+        self.monster_walk_frame = 0
+
         # Find the sofa position to place the resident and chips
         tile = self.interior_tile
         for row in range(self.interior_h):
@@ -188,6 +202,17 @@ class Building:
                 if self.interior[row][col] == self.CLOSET:
                     self.closet_x = col * tile + tile // 2
                     self.closet_y = row * tile + tile // 2
+                    break
+            else:
+                continue
+            break
+
+        # Find the bed position
+        for row in range(self.interior_h):
+            for col in range(self.interior_w):
+                if self.interior[row][col] == self.BED:
+                    self.bed_x = col * tile + tile // 2
+                    self.bed_y = row * tile + tile // 2
                     break
             else:
                 continue
@@ -289,6 +314,17 @@ class Building:
             closet_col = self.interior_w - 2
         if grid[closet_row][closet_col] == self.FLOOR:
             grid[closet_row][closet_col] = self.CLOSET
+
+        # === BED ===
+        # Every house has a bed against the right wall!
+        # Shake it and maybe a 6-legged monster crawls out...
+        bed_row = rng.randint(3, self.interior_h - 4)
+        bed_col = self.interior_w - 2  # against the right wall
+        # Make sure we don't overwrite something important
+        if grid[bed_row][bed_col] != self.FLOOR:
+            bed_col = 1  # try the left wall instead
+        if grid[bed_row][bed_col] == self.FLOOR:
+            grid[bed_row][bed_col] = self.BED
 
         return grid
 
@@ -666,42 +702,6 @@ for bx in range(0, WORLD_WIDTH, step):
 
 
 # ============================================================
-# COLLISION GRID (for raycasting)
-# ============================================================
-# For first-person mode, we need a grid version of the world.
-# Think of it like graph paper laid over the city - each tiny
-# square is either "wall" (part of a building) or "empty".
-# When we shoot rays in first person, they step through this
-# grid to find walls quickly.
-
-TILE_SIZE = 16  # each grid cell is 16x16 pixels
-GRID_W = WORLD_WIDTH // TILE_SIZE
-GRID_H = WORLD_HEIGHT // TILE_SIZE
-
-# Create the grid - None means empty, a color tuple means wall
-world_grid = [[None] * GRID_W for _ in range(GRID_H)]
-
-# Fill in the grid from buildings
-for b in buildings:
-    # Figure out which grid cells this building covers
-    col_start = max(0, b.x // TILE_SIZE)
-    col_end = min(GRID_W, (b.x + b.w) // TILE_SIZE + 1)
-    row_start = max(0, b.y // TILE_SIZE)
-    row_end = min(GRID_H, (b.y + b.h) // TILE_SIZE + 1)
-    for row in range(row_start, row_end):
-        for col in range(col_start, col_end):
-            world_grid[row][col] = b.color
-
-# Also mark the world edges as walls so rays don't go forever
-for col in range(GRID_W):
-    world_grid[0][col] = DARK_GRAY
-    world_grid[GRID_H - 1][col] = DARK_GRAY
-for row in range(GRID_H):
-    world_grid[row][0] = DARK_GRAY
-    world_grid[row][GRID_W - 1] = DARK_GRAY
-
-
-# ============================================================
 # DRAW FUNCTIONS
 # ============================================================
 def draw_road_grid(surface, cam_x, cam_y):
@@ -919,514 +919,6 @@ def draw_burrb(surface, x, y, cam_x, cam_y, facing_left, walk_frame):
     pygame.draw.polygon(surface, (200, 130, 20), beak_points, 1)
 
 
-# ============================================================
-# FIRST PERSON RAYCASTING
-# ============================================================
-# This is the Doom-style 3D renderer! Here's how it works:
-#
-# Imagine you're the Burrb, looking forward. You shoot out
-# hundreds of invisible "rays" in a fan shape from your eyes.
-# Each ray travels forward until it hits a wall (building).
-#
-# - If a ray hits something CLOSE, we draw a TALL stripe
-# - If a ray hits something FAR, we draw a SHORT stripe
-#
-# All these stripes side by side create the illusion of 3D!
-#
-# This is called "raycasting" and it's exactly how the
-# original Doom and Wolfenstein 3D games worked in the 1990s.
-
-FOV = math.pi / 3  # 60 degrees - how wide the burrb can see
-HALF_FOV = FOV / 2
-# How many rays to cast - one per pixel for smooth walls!
-# (We used to do 1 per 2 pixels, but that looked blocky)
-NUM_RAYS = SCREEN_WIDTH
-RAY_STEP = FOV / NUM_RAYS
-MAX_DEPTH = 800  # how far rays can travel (in pixels)
-
-# Sky colors for gradient (Super Mario 3D World style - bright and cheerful!)
-SKY_TOP = (30, 120, 255)  # vivid blue at the top
-SKY_BOTTOM = (140, 210, 255)  # light sky blue at the horizon
-# Ground colors for gradient (bright green grass, like Mario games!)
-GROUND_TOP = (60, 180, 50)  # darker green at horizon
-GROUND_BOTTOM = (100, 220, 70)  # bright cheerful green close up
-
-
-def draw_first_person(surface, px, py, angle):
-    """
-    Draw the world from the Burrb's eyes using raycasting!
-
-    px, py  = Burrb's position in the world (in pixels)
-    angle   = direction the Burrb is looking (in radians)
-
-    Returns a "depth buffer" - a list with one number per screen column.
-    Each number is how far away the wall is at that column. NPCs and
-    cars use this to know when they should be hidden behind a wall!
-    """
-    # Depth buffer: one entry per screen column, starts at max distance
-    depth_buffer = [MAX_DEPTH] * SCREEN_WIDTH
-
-    # --- SKY (Super Mario 3D World style - bright blue with fluffy clouds!) ---
-    half_h = SCREEN_HEIGHT // 2
-    for y in range(half_h):
-        t = y / half_h
-        r = int(SKY_TOP[0] + (SKY_BOTTOM[0] - SKY_TOP[0]) * t)
-        g = int(SKY_TOP[1] + (SKY_BOTTOM[1] - SKY_TOP[1]) * t)
-        b = int(SKY_TOP[2] + (SKY_BOTTOM[2] - SKY_TOP[2]) * t)
-        pygame.draw.line(surface, (r, g, b), (0, y), (SCREEN_WIDTH, y))
-
-    # Fluffy clouds! (drawn on top of the sky gradient)
-    # The clouds scroll slowly based on the player's angle to feel alive
-    cloud_offset = angle * 80  # clouds drift as you turn
-    cloud_data = [
-        (150, 60, 90, 30),  # (x_base, y, width, height)
-        (400, 40, 110, 35),
-        (650, 70, 80, 25),
-        (250, 90, 100, 28),
-        (800, 55, 95, 32),
-        (50, 45, 70, 22),
-        (520, 80, 85, 26),
-    ]
-    for cx_base, cy, cw, ch in cloud_data:
-        # Clouds wrap around the screen as you turn
-        cx = int((cx_base - cloud_offset) % (SCREEN_WIDTH + 200) - 100)
-        # Main cloud body (overlapping white circles for puffy look)
-        cloud_white = (255, 255, 255)
-        cloud_shadow = (220, 235, 255)
-        # Bottom shadow
-        pygame.draw.ellipse(surface, cloud_shadow, (cx - cw // 2, cy + ch // 4, cw, ch))
-        # Main puffs
-        pygame.draw.ellipse(surface, cloud_white, (cx - cw // 2, cy, cw, ch))
-        pygame.draw.ellipse(
-            surface,
-            cloud_white,
-            (cx - cw // 3, cy - ch // 3, int(cw * 0.6), int(ch * 0.8)),
-        )
-        pygame.draw.ellipse(
-            surface,
-            cloud_white,
-            (cx + cw // 8, cy - ch // 4, int(cw * 0.5), int(ch * 0.7)),
-        )
-
-    # --- GROUND (bright green grass with Mario-style stripes!) ---
-    for y in range(half_h, SCREEN_HEIGHT):
-        t = (y - half_h) / half_h
-        r = int(GROUND_TOP[0] + (GROUND_BOTTOM[0] - GROUND_TOP[0]) * t)
-        g = int(GROUND_TOP[1] + (GROUND_BOTTOM[1] - GROUND_TOP[1]) * t)
-        b = int(GROUND_TOP[2] + (GROUND_BOTTOM[2] - GROUND_TOP[2]) * t)
-        # Add subtle grass stripes (alternating lighter/darker green)
-        # Stripes get wider near the bottom (perspective!)
-        stripe_width = max(2, int(3 + t * 12))
-        if ((y + int(angle * 20)) // stripe_width) % 2 == 0:
-            r = min(255, r + 12)
-            g = min(255, g + 15)
-            b = min(255, b + 5)
-        pygame.draw.line(surface, (r, g, b), (0, y), (SCREEN_WIDTH, y))
-
-    # --- CAST RAYS ---
-    # We shoot one ray for every 2 columns of pixels on screen.
-    # Each ray starts at the burrb and travels in a slightly
-    # different direction, fanning out across the field of view.
-
-    ray_angle = angle - HALF_FOV  # start from left side of view
-
-    for ray_num in range(NUM_RAYS):
-        # --- DDA RAYCASTING ALGORITHM ---
-        # "DDA" stands for Digital Differential Analyzer.
-        # It's a clever way to step through the grid, cell by cell,
-        # following the ray's direction. Instead of moving the ray
-        # by tiny steps (slow!), DDA jumps from grid line to grid line.
-
-        ra = ray_angle
-        sin_a = math.sin(ra)
-        cos_a = math.cos(ra)
-
-        # Avoid division by zero
-        if abs(cos_a) < 0.00001:
-            cos_a = 0.00001
-        if abs(sin_a) < 0.00001:
-            sin_a = 0.00001
-
-        # Which grid cell are we starting in?
-        map_x = int(px) // TILE_SIZE
-        map_y = int(py) // TILE_SIZE
-
-        # --- Check VERTICAL grid lines (left/right walls) ---
-        # How far is it between vertical grid lines along this ray?
-        delta_dist_x = abs(TILE_SIZE / cos_a)
-        # Are we going left or right?
-        if cos_a > 0:
-            step_x = 1
-            side_dist_x = (map_x * TILE_SIZE + TILE_SIZE - px) / abs(cos_a)
-        else:
-            step_x = -1
-            side_dist_x = (px - map_x * TILE_SIZE) / abs(cos_a)
-
-        # --- Check HORIZONTAL grid lines (top/bottom walls) ---
-        delta_dist_y = abs(TILE_SIZE / sin_a)
-        if sin_a > 0:
-            step_y = 1
-            side_dist_y = (map_y * TILE_SIZE + TILE_SIZE - py) / abs(sin_a)
-        else:
-            step_y = -1
-            side_dist_y = (py - map_y * TILE_SIZE) / abs(sin_a)
-
-        # Step through the grid until we hit a wall or go too far
-        hit = False
-        hit_side = 0  # 0 = hit a vertical wall, 1 = hit a horizontal wall
-        dist = 0
-        wall_color = GRAY
-
-        for _ in range(64):  # max 64 steps (safety limit)
-            # Jump to the next grid line (whichever is closer)
-            if side_dist_x < side_dist_y:
-                dist = side_dist_x
-                side_dist_x += delta_dist_x
-                map_x += step_x
-                hit_side = 0
-            else:
-                dist = side_dist_y
-                side_dist_y += delta_dist_y
-                map_y += step_y
-                hit_side = 1
-
-            # Did the ray leave the grid?
-            if map_x < 0 or map_x >= GRID_W or map_y < 0 or map_y >= GRID_H:
-                dist = MAX_DEPTH
-                break
-
-            # Did the ray hit a wall?
-            cell = world_grid[map_y][map_x]
-            if cell is not None:
-                wall_color = cell
-                hit = True
-                break
-
-        if dist <= 0:
-            dist = 0.1
-
-        # --- FISHEYE CORRECTION ---
-        # Without this, walls would look curved/bulgy in the middle
-        # of the screen. We fix it by adjusting the distance based on
-        # the angle difference between this ray and where we're looking.
-        corrected_dist = dist * math.cos(ra - angle)
-        if corrected_dist <= 0:
-            corrected_dist = 0.1
-
-        # --- CALCULATE WALL HEIGHT ---
-        # Closer walls = taller, farther walls = shorter
-        # The constant (20000) controls how tall walls look overall
-        wall_height = min(SCREEN_HEIGHT, 20000 / corrected_dist)
-
-        # Where to draw this wall stripe on screen
-        wall_top = half_h - wall_height / 2
-        wall_bottom = half_h + wall_height / 2
-
-        # --- WALL_X: where on the wall surface did the ray hit? ---
-        # This gives us a number from 0.0 to 1.0 that tells us
-        # how far across the wall tile the ray landed. We need this
-        # to know where to draw windows, spikes, and other details.
-        if hit_side == 0:
-            # Hit a vertical wall - use Y position to find wall_x
-            wall_x = (py + dist * sin_a) % TILE_SIZE / TILE_SIZE
-        else:
-            # Hit a horizontal wall - use X position to find wall_x
-            wall_x = (px + dist * cos_a) % TILE_SIZE / TILE_SIZE
-
-        # --- SHADING (Mario 3D World style - bright and cheerful!) ---
-        # In Mario games, things don't get super dark in the distance.
-        # We keep everything bright and colorful with gentle shading.
-        shade = max(0.55, 1.0 - corrected_dist / MAX_DEPTH * 0.5)
-        if hit_side == 1:
-            shade *= 0.88  # subtle side shading (not too dark!)
-
-        # Apply shading to the wall color (stays bright!)
-        r = min(255, int(wall_color[0] * shade))
-        g = min(255, int(wall_color[1] * shade))
-        b = min(255, int(wall_color[2] * shade))
-        shaded_color = (r, g, b)
-
-        # Roof color - slightly different hue, not much darker
-        # (Mario roofs are colorful, not gloomy!)
-        roof_shade = shade * 0.85
-        roof_r = min(255, int(wall_color[0] * roof_shade))
-        roof_g = min(255, int(wall_color[1] * roof_shade))
-        roof_b = min(255, int(wall_color[2] * roof_shade))
-        roof_color = (roof_r, roof_g, roof_b)
-
-        # Bright white highlight for the top edge of walls (cartoon outline!)
-        highlight_color = (
-            min(255, int(wall_color[0] * shade + 60)),
-            min(255, int(wall_color[1] * shade + 60)),
-            min(255, int(wall_color[2] * shade + 60)),
-        )
-
-        # Store wall distance in the depth buffer for this column
-        if 0 <= ray_num < SCREEN_WIDTH:
-            depth_buffer[ray_num] = corrected_dist
-
-        # --- DRAW THE WALL STRIPE (Super Mario 3D World style!) ---
-        # Bright, colorful, cartoon-like buildings with round rooftops,
-        # cute windows, and cheerful doors!
-        screen_x = ray_num
-        if hit:
-            # === ROUNDED ROOFTOP ===
-            # Mario-style buildings have smooth, rounded tops!
-            # We use a sine wave to make gentle bumps along the roof.
-            bump_freq = 2.0  # gentle bumps per tile
-            bump_wave = (math.sin(wall_x * bump_freq * math.pi * 2) + 1.0) * 0.5
-            bump_max = wall_height * 0.10  # 10% of wall height
-            bump_h = bump_wave * bump_max
-
-            # Draw the roof bump (brighter than the wall, not darker!)
-            if bump_h > 1:
-                bump_top = int(wall_top - bump_h)
-                pygame.draw.rect(
-                    surface, roof_color, (screen_x, bump_top, 1, int(bump_h))
-                )
-
-            # === BRIGHT HIGHLIGHT LINE at the top ===
-            # Mario buildings have a bright edge along the top - cartoon style!
-            highlight_h = max(2, int(wall_height * 0.04))
-            pygame.draw.rect(
-                surface, highlight_color, (screen_x, int(wall_top), 1, highlight_h)
-            )
-
-            # === MAIN WALL ===
-            # Bright, saturated wall in the building's candy color
-            main_top = int(wall_top) + highlight_h
-            main_h = int(wall_height) - highlight_h
-            if main_h > 0:
-                pygame.draw.rect(surface, shaded_color, (screen_x, main_top, 1, main_h))
-
-            # === BOTTOM EDGE (dark outline for cartoon look) ===
-            # A thin dark line at the very bottom of the wall
-            if wall_height > 20:
-                bot_h = max(1, int(wall_height * 0.02))
-                bot_y = int(wall_top + wall_height - bot_h)
-                dark_edge = (
-                    max(0, shaded_color[0] - 50),
-                    max(0, shaded_color[1] - 50),
-                    max(0, shaded_color[2] - 50),
-                )
-                pygame.draw.rect(surface, dark_edge, (screen_x, bot_y, 1, bot_h))
-
-            # === CUTE WINDOWS (Mario-style!) ===
-            # Bright, cheerful windows with white frames
-            win_width = 0.09
-            win_positions = [0.25, 0.5, 0.75]
-            in_window_col = False
-            for wp in win_positions:
-                if abs(wall_x - wp) < win_width:
-                    in_window_col = True
-                    break
-
-            if in_window_col and wall_height > 30:
-                num_win_rows = min(3, max(1, int(wall_height / 50)))
-                win_h = max(4, int(wall_height * 0.09))
-
-                for wi in range(num_win_rows):
-                    win_zone_top = wall_top + wall_height * 0.15
-                    win_zone_bottom = wall_top + wall_height * 0.70
-                    win_zone_h = win_zone_bottom - win_zone_top
-                    if num_win_rows == 1:
-                        wy = win_zone_top + win_zone_h * 0.4
-                    else:
-                        wy = win_zone_top + (win_zone_h * wi / (num_win_rows))
-
-                    # Mario windows are bright sky blue or warm yellow!
-                    window_id = int(wall_x * 10) + wi * 7
-                    if window_id % 3 != 0:
-                        # Bright sky-blue window (daytime!)
-                        win_color = (
-                            min(255, int(180 * shade)),
-                            min(255, int(230 * shade)),
-                            min(255, int(255 * shade)),
-                        )
-                    else:
-                        # Warm yellow/lit window
-                        win_color = (
-                            min(255, int(255 * shade)),
-                            min(255, int(240 * shade)),
-                            min(255, int(150 * shade)),
-                        )
-
-                    pygame.draw.rect(surface, win_color, (screen_x, int(wy), 1, win_h))
-
-                    # White window frame edge (at left/right of window)
-                    if (
-                        abs(wall_x - win_positions[0]) < 0.01
-                        or abs(wall_x - win_positions[1]) < 0.01
-                        or abs(wall_x - win_positions[2]) < 0.01
-                    ):
-                        frame_white = (
-                            min(255, int(255 * shade)),
-                            min(255, int(255 * shade)),
-                            min(255, int(255 * shade)),
-                        )
-                        pygame.draw.rect(
-                            surface, frame_white, (screen_x, int(wy), 1, win_h)
-                        )
-
-            # === CHEERFUL DOOR (Mario-style!) ===
-            # Bright colored doors with a round top feel
-            if wall_height > 60 and corrected_dist < 300:
-                hit_world_x = px + dist * cos_a
-                hit_world_y = py + dist * sin_a
-
-                cell_cx = map_x * TILE_SIZE + TILE_SIZE // 2
-                cell_cy = map_y * TILE_SIZE + TILE_SIZE // 2
-                for bld in buildings:
-                    if (
-                        bld.x <= cell_cx < bld.x + bld.w
-                        and bld.y <= cell_cy < bld.y + bld.h
-                    ):
-                        if hit_side == 0:
-                            face_pos = (hit_world_y - bld.y) / bld.h
-                        else:
-                            face_pos = (hit_world_x - bld.x) / bld.w
-
-                        if 0.35 < face_pos < 0.65:
-                            door_h = max(8, int(wall_height * 0.40))
-                            door_top = int(wall_top + wall_height - door_h)
-
-                            # Bright colorful door (warm brown with a hint of color)
-                            door_color = (
-                                min(255, int(180 * shade)),
-                                min(255, int(120 * shade)),
-                                min(255, int(60 * shade)),
-                            )
-                            pygame.draw.rect(
-                                surface, door_color, (screen_x, door_top, 1, door_h)
-                            )
-
-                            # White door frame (cartoon outline!)
-                            frame_color = (
-                                min(255, int(240 * shade)),
-                                min(255, int(240 * shade)),
-                                min(255, int(230 * shade)),
-                            )
-                            frame_h = max(1, door_h // 12)
-                            pygame.draw.rect(
-                                surface,
-                                frame_color,
-                                (screen_x, door_top, 1, frame_h),
-                            )
-
-                            # Round top of door (lighter arc)
-                            arc_zone = 0.04
-                            if abs(face_pos - 0.5) < arc_zone:
-                                pygame.draw.rect(
-                                    surface,
-                                    frame_color,
-                                    (screen_x, door_top - frame_h, 1, frame_h * 2),
-                                )
-
-                            # Big bright doorknob (gold star!)
-                            if 0.46 < face_pos < 0.54:
-                                knob_y = door_top + door_h * 2 // 3
-                                knob_color = (
-                                    min(255, int(255 * shade)),
-                                    min(255, int(220 * shade)),
-                                    min(255, int(50 * shade)),
-                                )
-                                pygame.draw.rect(
-                                    surface,
-                                    knob_color,
-                                    (screen_x, int(knob_y), 1, max(2, door_h // 6)),
-                                )
-                        break
-
-        # Move to the next ray
-        ray_angle += RAY_STEP
-
-    return depth_buffer
-
-
-def draw_minimap(surface, px, py, angle):
-    """
-    Draw a tiny top-down map in the corner during first person mode.
-    This helps you not get lost! You can see where you are and
-    which direction you're looking.
-    """
-    map_size = 140
-    map_scale = 0.02  # how zoomed out the minimap is
-    map_x = SCREEN_WIDTH - map_size - 10
-    map_y = 10
-    map_cx = map_x + map_size // 2
-    map_cy = map_y + map_size // 2
-
-    # Semi-transparent background
-    map_surface = pygame.Surface((map_size, map_size))
-    map_surface.fill((30, 100, 30))
-    map_surface.set_alpha(180)
-    surface.blit(map_surface, (map_x, map_y))
-
-    # Draw buildings on minimap
-    view_range = map_size / map_scale / 2  # how far we can see on the map
-    for b in buildings:
-        # Position relative to the burrb
-        bx_rel = (b.x - px) * map_scale
-        by_rel = (b.y - py) * map_scale
-        bw = max(2, int(b.w * map_scale))
-        bh = max(2, int(b.h * map_scale))
-        sx = int(map_cx + bx_rel)
-        sy = int(map_cy + by_rel)
-        # Only draw if on the minimap
-        if (
-            map_x < sx + bw
-            and sx < map_x + map_size
-            and map_y < sy + bh
-            and sy < map_y + map_size
-        ):
-            # Clip to minimap bounds
-            draw_rect = pygame.Rect(sx, sy, bw, bh)
-            draw_rect = draw_rect.clip(pygame.Rect(map_x, map_y, map_size, map_size))
-            pygame.draw.rect(surface, (255, 200, 150), draw_rect)
-
-    # Draw NPCs on minimap as tiny colored dots
-    for npc in npcs:
-        nx_rel = (npc.x - px) * map_scale
-        ny_rel = (npc.y - py) * map_scale
-        nsx = int(map_cx + nx_rel)
-        nsy = int(map_cy + ny_rel)
-        if map_x < nsx < map_x + map_size and map_y < nsy < map_y + map_size:
-            pygame.draw.circle(surface, npc.color, (nsx, nsy), 2)
-
-    # Draw cars on minimap as tiny colored rectangles
-    for car in cars:
-        cx_rel = (car.x - px) * map_scale
-        cy_rel = (car.y - py) * map_scale
-        csx = int(map_cx + cx_rel)
-        csy = int(map_cy + cy_rel)
-        if map_x < csx < map_x + map_size and map_y < csy < map_y + map_size:
-            pygame.draw.rect(surface, car.color, (csx - 1, csy - 1, 3, 3))
-
-    # Draw the Burrb as a dot in the center
-    pygame.draw.circle(surface, BURRB_BLUE, (map_cx, map_cy), 3)
-
-    # Draw a line showing which direction you're looking
-    look_len = 12
-    look_x = int(map_cx + math.cos(angle) * look_len)
-    look_y = int(map_cy + math.sin(angle) * look_len)
-    pygame.draw.line(surface, BURRB_ORANGE, (map_cx, map_cy), (look_x, look_y), 2)
-
-    # Draw FOV cone lines
-    left_angle = angle - HALF_FOV
-    right_angle = angle + HALF_FOV
-    fov_len = 20
-    lx = int(map_cx + math.cos(left_angle) * fov_len)
-    ly = int(map_cy + math.sin(left_angle) * fov_len)
-    rx = int(map_cx + math.cos(right_angle) * fov_len)
-    ry = int(map_cy + math.sin(right_angle) * fov_len)
-    pygame.draw.line(surface, (180, 255, 100), (map_cx, map_cy), (lx, ly), 1)
-    pygame.draw.line(surface, (180, 255, 100), (map_cx, map_cy), (rx, ry), 1)
-
-    # Border
-    pygame.draw.rect(surface, WHITE, (map_x, map_y, map_size, map_size), 1)
-
-
-# ============================================================
 # NPC DRAWING FUNCTIONS
 # ============================================================
 
@@ -1593,582 +1085,6 @@ def draw_npc_topdown(surface, npc, cam_x, cam_y):
         pygame.draw.ellipse(surface, (50, 50, 45), (sx - 10, sy - 6, 20, 14), 1)
         # Little highlight (shiny spot)
         pygame.draw.circle(surface, (160, 160, 150), (sx - 3, sy - 7), 2)
-
-
-def draw_npcs_first_person(surface, px, py, angle, npc_list, depth_buffer):
-    """
-    Draw NPCs in first person mode as "billboards" - flat images
-    that always face toward you, with REAL 3D depth testing!
-
-    This works like Doom: we draw each NPC onto a temporary surface,
-    then copy it to the screen column by column, but ONLY for columns
-    where the NPC is closer than the wall. This means NPCs properly
-    disappear behind buildings instead of floating on top!
-
-    The depth_buffer is a list of wall distances (one per screen column)
-    from the raycaster. If an NPC is farther than the wall at a given
-    column, that column of the NPC doesn't get drawn.
-    """
-    half_h = SCREEN_HEIGHT // 2
-
-    # We need to sort NPCs by distance (farthest first) so close
-    # ones draw on top of far ones. This is called the "painter's
-    # algorithm" - paint the back first, then paint over it.
-    npc_draws = []
-
-    for npc in npc_list:
-        # Vector from player to NPC
-        dx = npc.x - px
-        dy = npc.y - py
-        dist = math.sqrt(dx * dx + dy * dy)
-
-        if dist < 10 or dist > MAX_DEPTH:
-            continue  # too close or too far
-
-        # What angle is this NPC at, relative to where we're looking?
-        npc_angle = math.atan2(dy, dx)
-        angle_diff = npc_angle - angle
-
-        # Normalize angle difference to -pi to pi
-        while angle_diff > math.pi:
-            angle_diff -= 2 * math.pi
-        while angle_diff < -math.pi:
-            angle_diff += 2 * math.pi
-
-        # Is the NPC within our field of view? (with some margin)
-        if abs(angle_diff) > HALF_FOV + 0.2:
-            continue  # behind us or too far to the side
-
-        npc_draws.append((dist, angle_diff, npc))
-
-    # Sort: farthest first (so close ones draw on top)
-    npc_draws.sort(key=lambda x: -x[0])
-
-    for dist, angle_diff, npc in npc_draws:
-        # Project onto screen X position
-        # angle_diff of 0 = center of screen
-        # angle_diff of -HALF_FOV = left edge
-        # angle_diff of +HALF_FOV = right edge
-        screen_x = int(SCREEN_WIDTH / 2 + (angle_diff / HALF_FOV) * SCREEN_WIDTH / 2)
-
-        # Size based on distance (closer = bigger)
-        sprite_height = min(SCREEN_HEIGHT, 12000 / dist)
-        sprite_width = sprite_height * 0.6
-
-        # Where to draw on screen (centered at feet level)
-        sprite_top = int(half_h - sprite_height * 0.3)
-        sprite_bottom = int(half_h + sprite_height * 0.7)
-        sprite_left = int(screen_x - sprite_width / 2)
-
-        sw = int(sprite_width)
-        sh = int(sprite_height)
-        if sw < 2 or sh < 2:
-            continue  # too small to draw
-
-        # Quick check: is EVERY column of this sprite behind a wall?
-        # If so, skip drawing entirely (saves time!)
-        all_hidden = True
-        for col in range(max(0, sprite_left), min(SCREEN_WIDTH, sprite_left + sw)):
-            if dist < depth_buffer[col]:
-                all_hidden = False
-                break
-        if all_hidden:
-            continue
-
-        # === RENDER NPC TO A TEMPORARY SURFACE ===
-        # We draw the NPC onto a small offscreen surface first,
-        # then copy it column-by-column with depth testing.
-        # The "colorkey" trick makes the background transparent.
-        TRANSPARENT = (255, 0, 255)  # magenta = see-through
-        npc_surf = pygame.Surface((sw, sh))
-        npc_surf.fill(TRANSPARENT)
-        npc_surf.set_colorkey(TRANSPARENT)
-
-        # All drawing coordinates are LOCAL to npc_surf (0,0 is top-left)
-        local_cx = sw // 2  # center X of the sprite surface
-
-        # Distance shading (farther = darker)
-        shade = max(0.55, 1.0 - dist / MAX_DEPTH * 0.5)
-
-        # Apply shading to colors
-        r = min(255, int(npc.color[0] * shade))
-        g = min(255, int(npc.color[1] * shade))
-        b = min(255, int(npc.color[2] * shade))
-        body_color = (r, g, b)
-
-        dr = min(255, int(npc.detail_color[0] * shade))
-        dg = min(255, int(npc.detail_color[1] * shade))
-        db = min(255, int(npc.detail_color[2] * shade))
-        detail_color = (dr, dg, db)
-
-        outline = (
-            max(0, int(30 * shade)),
-            max(0, int(30 * shade)),
-            max(0, int(30 * shade)),
-        )
-
-        # Leg animation
-        leg_kick = math.sin(npc.walk_frame * 0.3) * sh * 0.05
-
-        if npc.npc_type == "burrb":
-            # === BURRB SPRITE ===
-            body_h = int(sh * 0.5)
-            body_w = int(sw * 0.9)
-            body_top_l = int(sh * 0.2)
-            body_left_l = local_cx - body_w // 2
-
-            # Legs
-            leg_x1 = local_cx - body_w // 4
-            leg_x2 = local_cx + body_w // 4
-            leg_top_l = body_top_l + body_h
-            leg_len = max(2, int(sh * 0.2))
-            lw = max(1, sw // 12)
-            pygame.draw.line(
-                npc_surf,
-                outline,
-                (leg_x1, leg_top_l),
-                (int(leg_x1 + leg_kick), leg_top_l + leg_len),
-                lw,
-            )
-            pygame.draw.line(
-                npc_surf,
-                outline,
-                (leg_x2, leg_top_l),
-                (int(leg_x2 - leg_kick), leg_top_l + leg_len),
-                lw,
-            )
-
-            # Body (square with rounded corners)
-            if body_w > 4 and body_h > 4:
-                pygame.draw.rect(
-                    npc_surf,
-                    body_color,
-                    (body_left_l, body_top_l, body_w, body_h),
-                    border_radius=max(1, sw // 8),
-                )
-                pygame.draw.rect(
-                    npc_surf,
-                    outline,
-                    (body_left_l, body_top_l, body_w, body_h),
-                    1,
-                    border_radius=max(1, sw // 8),
-                )
-
-            # Spikes on top
-            num_spikes = 4
-            for i in range(num_spikes):
-                spike_x = body_left_l + int(body_w * (i + 0.5) / num_spikes)
-                spike_h = max(2, int(sh * 0.12))
-                if i % 2 == 0:
-                    spike_h = int(spike_h * 1.3)
-                pygame.draw.polygon(
-                    npc_surf,
-                    body_color,
-                    [
-                        (spike_x - max(1, sw // 10), body_top_l),
-                        (spike_x, body_top_l - spike_h),
-                        (spike_x + max(1, sw // 10), body_top_l),
-                    ],
-                )
-
-            # Eye (teardrop)
-            eye_x = local_cx + body_w // 6
-            eye_y = body_top_l + body_h // 4
-            eye_r = max(1, sw // 8)
-            pygame.draw.circle(npc_surf, outline, (eye_x, eye_y), eye_r)
-            if eye_r > 1:
-                pygame.draw.circle(
-                    npc_surf,
-                    (255, 255, 255),
-                    (eye_x - eye_r // 3, eye_y - eye_r // 3),
-                    max(1, eye_r // 3),
-                )
-
-            # Beak
-            beak_w = max(2, int(sw * 0.3))
-            beak_x = local_cx + body_w // 2
-            beak_y = body_top_l + body_h // 3
-            orange_shaded = (
-                min(255, int(230 * shade)),
-                min(255, int(160 * shade)),
-                min(255, int(30 * shade)),
-            )
-            pygame.draw.polygon(
-                npc_surf,
-                orange_shaded,
-                [
-                    (beak_x, beak_y - max(1, sh // 20)),
-                    (beak_x + beak_w, beak_y),
-                    (beak_x, beak_y + max(1, sh // 20)),
-                ],
-            )
-
-        elif npc.npc_type == "human":
-            # === HUMAN SPRITE ===
-            head_r = max(2, int(sw * 0.25))
-            head_y = head_r + 2
-            pygame.draw.circle(npc_surf, body_color, (local_cx, head_y), head_r)
-            pygame.draw.circle(npc_surf, outline, (local_cx, head_y), head_r, 1)
-            if head_r > 3:
-                pygame.draw.circle(
-                    npc_surf,
-                    outline,
-                    (local_cx - head_r // 3, head_y - 1),
-                    max(1, head_r // 4),
-                )
-                pygame.draw.circle(
-                    npc_surf,
-                    outline,
-                    (local_cx + head_r // 3, head_y - 1),
-                    max(1, head_r // 4),
-                )
-
-            # Body (shirt)
-            torso_top = head_y + head_r
-            torso_h = max(3, int(sh * 0.3))
-            torso_w = max(3, int(sw * 0.6))
-            pygame.draw.rect(
-                npc_surf,
-                detail_color,
-                (local_cx - torso_w // 2, torso_top, torso_w, torso_h),
-            )
-            pygame.draw.rect(
-                npc_surf,
-                outline,
-                (local_cx - torso_w // 2, torso_top, torso_w, torso_h),
-                1,
-            )
-
-            # Arms
-            arm_w = max(1, sw // 10)
-            arm_len = max(2, int(sh * 0.15))
-            arm_swing = leg_kick * 0.7
-            pygame.draw.line(
-                npc_surf,
-                body_color,
-                (local_cx - torso_w // 2, torso_top + 2),
-                (
-                    int(local_cx - torso_w // 2 - arm_w * 2),
-                    int(torso_top + arm_len + arm_swing),
-                ),
-                arm_w,
-            )
-            pygame.draw.line(
-                npc_surf,
-                body_color,
-                (local_cx + torso_w // 2, torso_top + 2),
-                (
-                    int(local_cx + torso_w // 2 + arm_w * 2),
-                    int(torso_top + arm_len - arm_swing),
-                ),
-                arm_w,
-            )
-
-            # Legs (pants - darker)
-            leg_top_l = torso_top + torso_h
-            leg_len = max(3, int(sh * 0.25))
-            leg_w = max(1, sw // 8)
-            pants_color = (
-                max(0, int(40 * shade)),
-                max(0, int(40 * shade)),
-                max(0, int(60 * shade)),
-            )
-            pygame.draw.line(
-                npc_surf,
-                pants_color,
-                (local_cx - torso_w // 4, leg_top_l),
-                (int(local_cx - torso_w // 4 + leg_kick), leg_top_l + leg_len),
-                leg_w,
-            )
-            pygame.draw.line(
-                npc_surf,
-                pants_color,
-                (local_cx + torso_w // 4, leg_top_l),
-                (int(local_cx + torso_w // 4 - leg_kick), leg_top_l + leg_len),
-                leg_w,
-            )
-
-        elif npc.npc_type == "cat":
-            # === CAT SPRITE ===
-            body_h = max(3, int(sh * 0.25))
-            body_w = max(4, int(sw * 0.7))
-            body_top_l = int(sh * 0.45)
-
-            # Body (oval)
-            pygame.draw.ellipse(
-                npc_surf,
-                body_color,
-                (local_cx - body_w // 2, body_top_l, body_w, body_h),
-            )
-            pygame.draw.ellipse(
-                npc_surf,
-                outline,
-                (local_cx - body_w // 2, body_top_l, body_w, body_h),
-                1,
-            )
-
-            # Head
-            head_r = max(2, int(sw * 0.22))
-            head_x = local_cx
-            head_y = body_top_l - head_r + 2
-            pygame.draw.circle(npc_surf, body_color, (head_x, head_y), head_r)
-            pygame.draw.circle(npc_surf, outline, (head_x, head_y), head_r, 1)
-
-            # Pointy ears!
-            ear_h = max(2, int(sh * 0.1))
-            pygame.draw.polygon(
-                npc_surf,
-                body_color,
-                [
-                    (head_x - head_r, head_y - head_r // 2),
-                    (head_x - head_r // 2, head_y - head_r - ear_h),
-                    (head_x, head_y - head_r // 2),
-                ],
-            )
-            pygame.draw.polygon(
-                npc_surf,
-                body_color,
-                [
-                    (head_x, head_y - head_r // 2),
-                    (head_x + head_r // 2, head_y - head_r - ear_h),
-                    (head_x + head_r, head_y - head_r // 2),
-                ],
-            )
-
-            # Eyes (glowing!)
-            if head_r > 2:
-                eye_color = (
-                    min(255, int(200 * shade)),
-                    min(255, int(220 * shade)),
-                    min(255, int(50 * shade)),
-                )
-                pygame.draw.circle(
-                    npc_surf,
-                    eye_color,
-                    (head_x - head_r // 3, head_y),
-                    max(1, head_r // 3),
-                )
-                pygame.draw.circle(
-                    npc_surf,
-                    eye_color,
-                    (head_x + head_r // 3, head_y),
-                    max(1, head_r // 3),
-                )
-
-            # Tail (curvy!)
-            tail_wave = math.sin(npc.walk_frame * 0.15) * max(2, sw // 5)
-            tail_x = local_cx - body_w // 2
-            pygame.draw.line(
-                npc_surf,
-                body_color,
-                (tail_x, body_top_l + body_h // 2),
-                (int(tail_x - sw * 0.3), int(body_top_l - sh * 0.1 + tail_wave)),
-                max(1, sw // 10),
-            )
-
-            # Legs (thin)
-            leg_len = max(2, int(sh * 0.12))
-            lw = max(1, sw // 12)
-            pygame.draw.line(
-                npc_surf,
-                outline,
-                (local_cx - body_w // 3, body_top_l + body_h),
-                (local_cx - body_w // 3, body_top_l + body_h + leg_len),
-                lw,
-            )
-            pygame.draw.line(
-                npc_surf,
-                outline,
-                (local_cx + body_w // 3, body_top_l + body_h),
-                (local_cx + body_w // 3, body_top_l + body_h + leg_len),
-                lw,
-            )
-
-        elif npc.npc_type == "dog":
-            # === DOG SPRITE ===
-            body_h = max(3, int(sh * 0.28))
-            body_w = max(5, int(sw * 0.8))
-            body_top_l = int(sh * 0.38)
-
-            # Body (oval, slightly bigger than cat)
-            pygame.draw.ellipse(
-                npc_surf,
-                body_color,
-                (local_cx - body_w // 2, body_top_l, body_w, body_h),
-            )
-            pygame.draw.ellipse(
-                npc_surf,
-                outline,
-                (local_cx - body_w // 2, body_top_l, body_w, body_h),
-                1,
-            )
-
-            # Head
-            head_r = max(3, int(sw * 0.25))
-            head_x = local_cx + body_w // 4
-            head_y = body_top_l - head_r // 2
-            pygame.draw.circle(npc_surf, body_color, (head_x, head_y), head_r)
-            pygame.draw.circle(npc_surf, outline, (head_x, head_y), head_r, 1)
-
-            # Snout
-            snout_w = max(2, int(sw * 0.18))
-            snout_h = max(2, int(sh * 0.06))
-            pygame.draw.ellipse(
-                npc_surf,
-                detail_color,
-                (head_x + head_r // 2, head_y - snout_h // 2, snout_w, snout_h),
-            )
-            # Nose
-            pygame.draw.circle(
-                npc_surf,
-                outline,
-                (head_x + head_r // 2 + snout_w, head_y),
-                max(1, sw // 15),
-            )
-
-            # Eye
-            if head_r > 3:
-                pygame.draw.circle(
-                    npc_surf,
-                    outline,
-                    (head_x - head_r // 4, head_y - head_r // 4),
-                    max(1, head_r // 4),
-                )
-
-            # Floppy ear
-            ear_w = max(2, int(sw * 0.12))
-            ear_h = max(2, int(sh * 0.1))
-            pygame.draw.ellipse(
-                npc_surf,
-                detail_color,
-                (head_x - head_r // 2, head_y - head_r, ear_w, ear_h),
-            )
-
-            # Tail (wagging!)
-            tail_wave = math.sin(npc.walk_frame * 0.2) * max(2, sw // 4)
-            tail_x = local_cx - body_w // 2
-            pygame.draw.line(
-                npc_surf,
-                body_color,
-                (tail_x, body_top_l + body_h // 3),
-                (int(tail_x - sw * 0.25), int(body_top_l - sh * 0.08 + tail_wave)),
-                max(1, sw // 8),
-            )
-
-            # Legs
-            leg_len = max(2, int(sh * 0.15))
-            lw = max(1, sw // 10)
-            pygame.draw.line(
-                npc_surf,
-                outline,
-                (local_cx - body_w // 3, body_top_l + body_h),
-                (int(local_cx - body_w // 3 + leg_kick), body_top_l + body_h + leg_len),
-                lw,
-            )
-            pygame.draw.line(
-                npc_surf,
-                outline,
-                (local_cx + body_w // 4, body_top_l + body_h),
-                (int(local_cx + body_w // 4 - leg_kick), body_top_l + body_h + leg_len),
-                lw,
-            )
-
-        elif npc.npc_type == "rock":
-            # === ROCK SPRITE (petrified NPC!) ===
-            # A lumpy gray boulder sitting on the ground
-            rock_w = int(sw * 0.8)
-            rock_h = int(sh * 0.5)
-            rock_top_l = int(sh * 0.4)
-            rock_left_l = local_cx - rock_w // 2
-
-            # Main rock body (big ellipse)
-            pygame.draw.ellipse(
-                npc_surf,
-                body_color,
-                (rock_left_l, rock_top_l, rock_w, rock_h),
-            )
-            # Upper bump (smaller overlapping ellipse)
-            bump_w = int(rock_w * 0.6)
-            bump_h = int(rock_h * 0.5)
-            pygame.draw.ellipse(
-                npc_surf,
-                detail_color,
-                (local_cx - bump_w // 2, rock_top_l - bump_h // 2, bump_w, bump_h),
-            )
-            # Small top bump
-            tiny_w = int(rock_w * 0.35)
-            tiny_h = int(rock_h * 0.3)
-            pygame.draw.ellipse(
-                npc_surf,
-                body_color,
-                (
-                    local_cx - tiny_w // 2,
-                    rock_top_l - bump_h // 2 - tiny_h // 3,
-                    tiny_w,
-                    tiny_h,
-                ),
-            )
-            # Cracks
-            crack_color = (
-                max(0, int(50 * shade)),
-                max(0, int(50 * shade)),
-                max(0, int(45 * shade)),
-            )
-            if rock_w > 8:
-                pygame.draw.line(
-                    npc_surf,
-                    crack_color,
-                    (local_cx - rock_w // 4, rock_top_l + rock_h // 4),
-                    (local_cx, rock_top_l + rock_h * 3 // 4),
-                    1,
-                )
-                pygame.draw.line(
-                    npc_surf,
-                    crack_color,
-                    (local_cx + rock_w // 6, rock_top_l + rock_h // 6),
-                    (local_cx + rock_w // 3, rock_top_l + rock_h // 2),
-                    1,
-                )
-            # Outline
-            pygame.draw.ellipse(
-                npc_surf,
-                outline,
-                (rock_left_l, rock_top_l, rock_w, rock_h),
-                1,
-            )
-            # Highlight
-            hl_color = (
-                min(255, int(170 * shade)),
-                min(255, int(170 * shade)),
-                min(255, int(160 * shade)),
-            )
-            hl_r = max(1, rock_w // 8)
-            pygame.draw.circle(
-                npc_surf,
-                hl_color,
-                (local_cx - rock_w // 5, rock_top_l + rock_h // 4),
-                hl_r,
-            )
-
-        # === DEPTH-TESTED BLIT ===
-        # This is the 3D magic! Instead of just slapping the sprite
-        # onto the screen, we copy it column by column, checking the
-        # depth buffer each time. If the wall at that column is closer
-        # than the NPC, we skip that column (the NPC is hidden behind
-        # the wall). This makes NPCs properly disappear behind buildings!
-        for col in range(sw):
-            screen_col = sprite_left + col
-            # Skip columns outside the screen
-            if screen_col < 0 or screen_col >= SCREEN_WIDTH:
-                continue
-            # The 3D depth test: is the NPC closer than the wall here?
-            if dist < depth_buffer[screen_col]:
-                # Yes! Draw this column of the sprite
-                surface.blit(
-                    npc_surf,
-                    (screen_col, sprite_top),
-                    area=pygame.Rect(col, 0, 1, sh),
-                )
 
 
 # ============================================================
@@ -2342,232 +1258,6 @@ def draw_car_topdown(surface, car, cam_x, cam_y):
     pygame.draw.rect(surface, (20, 20, 20), body_rect, 1, border_radius=4)
 
 
-def draw_cars_first_person(surface, px, py, angle, car_list, depth_buffer):
-    """
-    Draw cars in first person mode as billboard sprites with 3D depth testing!
-    Same technique as NPCs - render to temp surface, then blit column by column
-    checking the depth buffer so cars hide behind walls properly.
-    """
-    half_h = SCREEN_HEIGHT // 2
-
-    car_draws = []
-
-    for car in car_list:
-        dx = car.x - px
-        dy = car.y - py
-        dist = math.sqrt(dx * dx + dy * dy)
-
-        if dist < 10 or dist > MAX_DEPTH:
-            continue
-
-        car_angle = math.atan2(dy, dx)
-        angle_diff = car_angle - angle
-
-        while angle_diff > math.pi:
-            angle_diff -= 2 * math.pi
-        while angle_diff < -math.pi:
-            angle_diff += 2 * math.pi
-
-        if abs(angle_diff) > HALF_FOV + 0.2:
-            continue
-
-        car_draws.append((dist, angle_diff, car))
-
-    # Sort farthest first (painter's algorithm)
-    car_draws.sort(key=lambda x: -x[0])
-
-    for dist, angle_diff, car in car_draws:
-        screen_x = int(SCREEN_WIDTH / 2 + (angle_diff / HALF_FOV) * SCREEN_WIDTH / 2)
-
-        # Cars are bigger than NPCs
-        sprite_height = min(SCREEN_HEIGHT, 10000 / dist)
-        sprite_width = sprite_height * 1.2
-
-        # Cars sit on the ground
-        sprite_top = int(half_h - sprite_height * 0.2)
-        sprite_bottom = int(half_h + sprite_height * 0.8)
-        sprite_left = int(screen_x - sprite_width / 2)
-
-        sw = int(sprite_width)
-        sh = int(sprite_height)
-        if sw < 3 or sh < 3:
-            continue
-
-        # Quick check: is every column behind a wall?
-        all_hidden = True
-        for col in range(max(0, sprite_left), min(SCREEN_WIDTH, sprite_left + sw)):
-            if dist < depth_buffer[col]:
-                all_hidden = False
-                break
-        if all_hidden:
-            continue
-
-        # Render car to temp surface
-        TRANSPARENT = (255, 0, 255)
-        car_surf = pygame.Surface((sw, sh))
-        car_surf.fill(TRANSPARENT)
-        car_surf.set_colorkey(TRANSPARENT)
-
-        local_cx = sw // 2
-
-        # Distance shading
-        shade = max(0.55, 1.0 - dist / MAX_DEPTH * 0.5)
-
-        r = min(255, int(car.color[0] * shade))
-        g = min(255, int(car.color[1] * shade))
-        b = min(255, int(car.color[2] * shade))
-        body_color = (r, g, b)
-
-        dr = min(255, int(car.detail_color[0] * shade))
-        dg = min(255, int(car.detail_color[1] * shade))
-        db = min(255, int(car.detail_color[2] * shade))
-        detail_color = (dr, dg, db)
-
-        outline = (
-            max(0, int(30 * shade)),
-            max(0, int(30 * shade)),
-            max(0, int(30 * shade)),
-        )
-
-        # --- Draw car onto temp surface ---
-        # All coordinates are local (0,0 = top-left of car_surf)
-        local_bottom = sh
-        local_top = 0
-
-        # Body (main rectangle)
-        body_h = int(sh * 0.5)
-        body_w = sw
-        body_top_l = local_bottom - body_h
-        body_rect = pygame.Rect(0, body_top_l, body_w, body_h)
-        pygame.draw.rect(car_surf, body_color, body_rect, border_radius=3)
-
-        # Cabin/roof
-        cabin_h = int(sh * 0.3)
-        cabin_w = int(sw * 0.6)
-        cabin_left_l = local_cx - cabin_w // 2
-        cabin_top_l = body_top_l - cabin_h
-        cabin_rect = pygame.Rect(cabin_left_l, cabin_top_l, cabin_w, cabin_h)
-        pygame.draw.rect(car_surf, detail_color, cabin_rect, border_radius=3)
-
-        # Windows
-        win_color = (
-            min(255, int(160 * shade)),
-            min(255, int(200 * shade)),
-            min(255, int(230 * shade)),
-        )
-        win_margin = max(1, cabin_w // 8)
-        win_rect = pygame.Rect(
-            cabin_left_l + win_margin,
-            cabin_top_l + max(1, cabin_h // 4),
-            cabin_w - win_margin * 2,
-            cabin_h - max(2, cabin_h // 3),
-        )
-        pygame.draw.rect(car_surf, win_color, win_rect, border_radius=2)
-
-        # Window divider
-        if sw > 15:
-            pygame.draw.line(
-                car_surf,
-                detail_color,
-                (local_cx, cabin_top_l + max(1, cabin_h // 4)),
-                (local_cx, cabin_top_l + cabin_h - max(1, cabin_h // 4)),
-                max(1, sw // 20),
-            )
-
-        # Wheels
-        wheel_r = max(2, body_h // 4)
-        wheel_y_l = local_bottom
-        left_wheel_x = body_w // 5
-        right_wheel_x = body_w * 4 // 5
-        pygame.draw.circle(car_surf, (20, 20, 20), (left_wheel_x, wheel_y_l), wheel_r)
-        pygame.draw.circle(car_surf, (20, 20, 20), (right_wheel_x, wheel_y_l), wheel_r)
-        hub_r = max(1, wheel_r // 2)
-        pygame.draw.circle(car_surf, (120, 120, 120), (left_wheel_x, wheel_y_l), hub_r)
-        pygame.draw.circle(car_surf, (120, 120, 120), (right_wheel_x, wheel_y_l), hub_r)
-
-        # Headlights
-        hl_size = max(2, body_w // 10)
-        hl_color = (
-            min(255, int(255 * shade)),
-            min(255, int(255 * shade)),
-            min(255, int(180 * shade)),
-        )
-        pygame.draw.rect(
-            car_surf, hl_color, (1, body_top_l + body_h // 4, hl_size, hl_size)
-        )
-        pygame.draw.rect(
-            car_surf,
-            hl_color,
-            (body_w - hl_size - 1, body_top_l + body_h // 4, hl_size, hl_size),
-        )
-
-        # Taillights
-        tl_color = (min(255, int(200 * shade)), 0, 0)
-        pygame.draw.rect(
-            car_surf, tl_color, (1, body_top_l + body_h * 2 // 3, hl_size, hl_size)
-        )
-        pygame.draw.rect(
-            car_surf,
-            tl_color,
-            (body_w - hl_size - 1, body_top_l + body_h * 2 // 3, hl_size, hl_size),
-        )
-
-        # Taxi sign
-        if car.car_type == "taxi" and sw > 10:
-            sign_w = max(4, cabin_w // 3)
-            sign_h = max(2, cabin_h // 3)
-            sign_color = (
-                min(255, int(255 * shade)),
-                min(255, int(255 * shade)),
-                min(255, int(100 * shade)),
-            )
-            pygame.draw.rect(
-                car_surf,
-                sign_color,
-                (local_cx - sign_w // 2, cabin_top_l - sign_h, sign_w, sign_h),
-                border_radius=2,
-            )
-
-        # Truck cargo
-        if car.car_type == "truck":
-            cargo_h = int(sh * 0.15)
-            cargo_w = int(sw * 0.4)
-            cargo_left_l = body_w // 2
-            pygame.draw.rect(
-                car_surf,
-                detail_color,
-                (cargo_left_l, body_top_l - cargo_h, cargo_w, cargo_h + body_h),
-                border_radius=2,
-            )
-
-        # Sport stripe
-        if car.car_type == "sport" and sw > 12:
-            stripe_shade = min(255, int(255 * shade))
-            pygame.draw.line(
-                car_surf,
-                (stripe_shade, stripe_shade, stripe_shade),
-                (3, body_top_l + body_h // 2),
-                (body_w - 3, body_top_l + body_h // 2),
-                max(1, body_h // 8),
-            )
-
-        # Outlines
-        pygame.draw.rect(car_surf, outline, body_rect, 1, border_radius=3)
-        pygame.draw.rect(car_surf, outline, cabin_rect, 1, border_radius=3)
-
-        # === DEPTH-TESTED BLIT (same as NPCs) ===
-        for col in range(sw):
-            screen_col = sprite_left + col
-            if screen_col < 0 or screen_col >= SCREEN_WIDTH:
-                continue
-            if dist < depth_buffer[screen_col]:
-                surface.blit(
-                    car_surf,
-                    (screen_col, sprite_top),
-                    area=pygame.Rect(col, 0, 1, sh),
-                )
-
-
 # ============================================================
 # INTERIOR DRAWING AND COLLISION
 # ============================================================
@@ -2588,7 +1278,13 @@ def can_move_interior(bld, x, y):
         if row < 0 or row >= bld.interior_h or col < 0 or col >= bld.interior_w:
             return False
         cell = bld.interior[row][col]
-        if cell in (Building.WALL, Building.FURNITURE, Building.TV, Building.CLOSET):
+        if cell in (
+            Building.WALL,
+            Building.FURNITURE,
+            Building.TV,
+            Building.CLOSET,
+            Building.BED,
+        ):
             return False
     return True
 
@@ -2845,6 +1541,63 @@ def draw_interior_topdown(surface, bld, px, py):
                         border_radius=2,
                     )
 
+            elif cell == Building.BED:
+                # Draw floor underneath
+                floor_c = bld.floor_color
+                pygame.draw.rect(surface, floor_c, (sx, sy, tile, tile))
+                margin = 2
+                # Bed frame (dark brown)
+                pygame.draw.rect(
+                    surface,
+                    (90, 55, 25),
+                    (sx + margin, sy + margin, tile - margin * 2, tile - margin * 2),
+                    border_radius=2,
+                )
+                # Bedsheets (blue/white)
+                pygame.draw.rect(
+                    surface,
+                    (60, 60, 140),
+                    (
+                        sx + margin + 2,
+                        sy + margin + 2,
+                        tile - margin * 2 - 4,
+                        tile - margin * 2 - 6,
+                    ),
+                    border_radius=1,
+                )
+                # Pillow (white rectangle at the top)
+                pygame.draw.rect(
+                    surface,
+                    (220, 220, 230),
+                    (sx + margin + 4, sy + margin + 2, tile - margin * 2 - 8, 6),
+                    border_radius=1,
+                )
+                # Outline
+                pygame.draw.rect(
+                    surface,
+                    (60, 35, 15),
+                    (sx + margin, sy + margin, tile - margin * 2, tile - margin * 2),
+                    1,
+                    border_radius=2,
+                )
+                # If shaken and monster came out, bed looks messed up
+                if bld.bed_shaken and bld.bed_monster:
+                    # Messy sheets (diagonal lines)
+                    pygame.draw.line(
+                        surface,
+                        (40, 40, 100),
+                        (sx + 4, sy + 8),
+                        (sx + tile - 4, sy + tile - 4),
+                        1,
+                    )
+                    pygame.draw.line(
+                        surface,
+                        (40, 40, 100),
+                        (sx + tile - 4, sy + 8),
+                        (sx + 4, sy + tile - 4),
+                        1,
+                    )
+
     # Draw the resident burrb (sitting or chasing!)
     if bld.resident_x > 0:
         res_sx = int(bld.resident_x - cam_x)
@@ -2976,347 +1729,63 @@ def draw_interior_topdown(surface, bld, px, py):
                 border_radius=2,
             )
 
+    # Draw the 6-legged monster (if it crawled out from under the bed!)
+    if bld.monster_active:
+        mon_sx = int(bld.monster_x - cam_x)
+        mon_sy = int(bld.monster_y - cam_y)
+        if -30 < mon_sx < SCREEN_WIDTH + 30 and -30 < mon_sy < SCREEN_HEIGHT + 30:
+            wf = bld.monster_walk_frame
+            # Black oval body
+            pygame.draw.ellipse(
+                surface,
+                (15, 15, 15),
+                (mon_sx - 10, mon_sy - 6, 20, 12),
+            )
+            # 6 legs! (3 on each side, animated)
+            for leg_i in range(3):
+                leg_offset = math.sin(wf * 0.3 + leg_i * 1.2) * 3
+                # Left legs
+                lx = mon_sx - 8 + leg_i * 5
+                pygame.draw.line(
+                    surface,
+                    (30, 30, 30),
+                    (lx, mon_sy),
+                    (lx - 4, mon_sy + 8 + int(leg_offset)),
+                    2,
+                )
+                # Right legs
+                rx = mon_sx - 8 + leg_i * 5
+                pygame.draw.line(
+                    surface,
+                    (30, 30, 30),
+                    (rx, mon_sy),
+                    (rx + 4, mon_sy - 8 - int(leg_offset)),
+                    2,
+                )
+            # Two red eyes
+            pygame.draw.circle(surface, (255, 0, 0), (mon_sx - 4, mon_sy - 2), 2)
+            pygame.draw.circle(surface, (255, 0, 0), (mon_sx + 4, mon_sy - 2), 2)
+            # Tiny pincers/mandibles
+            pygame.draw.line(
+                surface,
+                (40, 0, 0),
+                (mon_sx - 2, mon_sy - 5),
+                (mon_sx - 5, mon_sy - 8),
+                1,
+            )
+            pygame.draw.line(
+                surface,
+                (40, 0, 0),
+                (mon_sx + 2, mon_sy - 5),
+                (mon_sx + 5, mon_sy - 8),
+                1,
+            )
+
     # Draw the burrb inside
     burrb_sx = px - cam_x
     burrb_sy = py - cam_y
     # Use the regular burrb drawing function with adjusted coordinates
     draw_burrb(surface, px, py, cam_x, cam_y, facing_left, walk_frame)
-
-
-def draw_interior_first_person(surface, bld, px, py, angle):
-    """
-    Draw the inside of a building in first person mode!
-    Uses raycasting just like outside, but on the building's
-    interior grid instead of the world grid.
-    """
-    tile = bld.interior_tile
-    half_h = SCREEN_HEIGHT // 2
-
-    # Ceiling gradient (indoor lighting)
-    ceil_top = (60, 55, 50)
-    ceil_bot = (120, 110, 100)
-    for y in range(half_h):
-        t = y / half_h
-        r = int(ceil_top[0] + (ceil_bot[0] - ceil_top[0]) * t)
-        g = int(ceil_top[1] + (ceil_bot[1] - ceil_top[1]) * t)
-        b = int(ceil_top[2] + (ceil_bot[2] - ceil_top[2]) * t)
-        pygame.draw.line(surface, (r, g, b), (0, y), (SCREEN_WIDTH, y))
-
-    # Floor gradient
-    floor_top_c = (
-        max(0, bld.floor_color[0] - 40),
-        max(0, bld.floor_color[1] - 40),
-        max(0, bld.floor_color[2] - 40),
-    )
-    floor_bot_c = bld.floor_color
-    for y in range(half_h, SCREEN_HEIGHT):
-        t = (y - half_h) / half_h
-        r = int(floor_top_c[0] + (floor_bot_c[0] - floor_top_c[0]) * t)
-        g = int(floor_top_c[1] + (floor_bot_c[1] - floor_top_c[1]) * t)
-        b = int(floor_bot_c[2] + (floor_bot_c[2] - floor_top_c[2]) * t)
-        # Clamp values
-        r = max(0, min(255, r))
-        g = max(0, min(255, g))
-        b = max(0, min(255, b))
-        pygame.draw.line(surface, (r, g, b), (0, y), (SCREEN_WIDTH, y))
-
-    # Raycast through the interior grid
-    ray_angle = angle - HALF_FOV
-
-    for ray_num in range(NUM_RAYS):
-        ra = ray_angle
-        sin_a = math.sin(ra)
-        cos_a = math.cos(ra)
-        if abs(cos_a) < 0.00001:
-            cos_a = 0.00001
-        if abs(sin_a) < 0.00001:
-            sin_a = 0.00001
-
-        map_x = int(px) // tile
-        map_y = int(py) // tile
-
-        delta_dist_x = abs(tile / cos_a)
-        if cos_a > 0:
-            step_x = 1
-            side_dist_x = (map_x * tile + tile - px) / abs(cos_a)
-        else:
-            step_x = -1
-            side_dist_x = (px - map_x * tile) / abs(cos_a)
-
-        delta_dist_y = abs(tile / sin_a)
-        if sin_a > 0:
-            step_y = 1
-            side_dist_y = (map_y * tile + tile - py) / abs(sin_a)
-        else:
-            step_y = -1
-            side_dist_y = (py - map_y * tile) / abs(sin_a)
-
-        hit = False
-        hit_side = 0
-        dist = 0
-        hit_type = Building.WALL
-
-        for _ in range(40):
-            if side_dist_x < side_dist_y:
-                dist = side_dist_x
-                side_dist_x += delta_dist_x
-                map_x += step_x
-                hit_side = 0
-            else:
-                dist = side_dist_y
-                side_dist_y += delta_dist_y
-                map_y += step_y
-                hit_side = 1
-
-            if (
-                map_x < 0
-                or map_x >= bld.interior_w
-                or map_y < 0
-                or map_y >= bld.interior_h
-            ):
-                dist = 400
-                break
-
-            cell = bld.interior[map_y][map_x]
-            if cell in (
-                Building.WALL,
-                Building.FURNITURE,
-                Building.SOFA,
-                Building.TV,
-                Building.CLOSET,
-            ):
-                hit_type = cell
-                hit = True
-                break
-
-        if dist <= 0:
-            dist = 0.1
-
-        corrected_dist = dist * math.cos(ra - angle)
-        if corrected_dist <= 0:
-            corrected_dist = 0.1
-
-        wall_height = min(SCREEN_HEIGHT, 12000 / corrected_dist)
-        wall_top = half_h - wall_height / 2
-
-        shade = max(0.3, 1.0 - corrected_dist / 400)
-        if hit_side == 1:
-            shade *= 0.8
-
-        screen_x = ray_num
-
-        if hit:
-            if hit_type == Building.WALL:
-                base = bld.wall_interior_color
-            elif hit_type == Building.SOFA:
-                base = (80, 120, 200)  # blue sofa
-            elif hit_type == Building.TV:
-                base = (30, 30, 30)  # dark TV screen
-            elif hit_type == Building.CLOSET:
-                if bld.closet_opened:
-                    base = (60, 40, 25)  # dark open closet
-                else:
-                    base = (160, 110, 60)  # wooden closet door
-            else:
-                base = bld.furniture_color
-
-            r = min(255, int(base[0] * shade))
-            g = min(255, int(base[1] * shade))
-            b = min(255, int(base[2] * shade))
-            pygame.draw.rect(
-                surface, (r, g, b), (screen_x, int(wall_top), 1, int(wall_height))
-            )
-
-            # TV screen glow (bright blue-white in the middle)
-            if hit_type == Building.TV and wall_height > 10:
-                glow_h = int(wall_height * 0.6)
-                glow_top = int(wall_top + wall_height * 0.15)
-                glow_color = (
-                    min(255, int(150 * shade)),
-                    min(255, int(200 * shade)),
-                    min(255, int(255 * shade)),
-                )
-                pygame.draw.rect(surface, glow_color, (screen_x, glow_top, 1, glow_h))
-
-            # Door tile gets a special brown color
-            if map_y == bld.interior_door_row and map_x == bld.interior_door_col:
-                dr = min(255, int(160 * shade))
-                dg = min(255, int(100 * shade))
-                db = min(255, int(40 * shade))
-                pygame.draw.rect(
-                    surface,
-                    (dr, dg, db),
-                    (screen_x, int(wall_top), 1, int(wall_height)),
-                )
-
-        ray_angle += RAY_STEP
-
-    # --- Draw resident burrb and chips as billboards in first person! ---
-    # This works like outdoor NPC rendering: calculate angle to object,
-    # project onto screen, draw a scaled sprite.
-    half_h = SCREEN_HEIGHT // 2
-
-    def _draw_interior_billboard(obj_x, obj_y, draw_func, sprite_w, sprite_h):
-        """Helper to draw an object as a billboard in interior first person."""
-        # Vector from player to object
-        dx_obj = obj_x - px
-        dy_obj = obj_y - py
-        obj_dist = math.sqrt(dx_obj * dx_obj + dy_obj * dy_obj)
-        if obj_dist < 1:
-            return  # too close, skip
-        # Angle to the object
-        obj_angle = math.atan2(dy_obj, dx_obj)
-        # Angle difference from view direction
-        diff = obj_angle - angle
-        # Normalize to -pi..pi
-        while diff > math.pi:
-            diff -= 2 * math.pi
-        while diff < -math.pi:
-            diff += 2 * math.pi
-        # Only draw if within FOV (plus a little margin)
-        if abs(diff) > HALF_FOV + 0.15:
-            return
-        # Project to screen x
-        screen_x = int(SCREEN_WIDTH / 2 + diff * SCREEN_WIDTH / FOV)
-        # Perspective-corrected distance
-        corrected = obj_dist * math.cos(diff)
-        if corrected < 1:
-            corrected = 1
-        # Scale based on distance
-        scale = 8000 / corrected
-        sw = max(4, int(sprite_w * scale / 100))
-        sh = max(4, int(sprite_h * scale / 100))
-        # Screen position (centered)
-        sx = screen_x - sw // 2
-        sy = half_h - sh // 2 + int(sh * 0.1)  # slightly below center (on floor)
-        # Call the draw function
-        draw_func(surface, sx, sy, sw, sh, corrected)
-
-    # Draw the resident burrb in first person!
-    if bld.resident_x > 0:
-
-        def _draw_resident_fp(surf, sx, sy, sw, sh, dist):
-            shade = max(0.3, 1.0 - dist / 400)
-            rc = bld.resident_color
-            rd = bld.resident_detail
-            if not bld.resident_angry:
-                # Normal resident - colored body
-                body_color = (
-                    int(rc[0] * shade),
-                    int(rc[1] * shade),
-                    int(rc[2] * shade),
-                )
-                pygame.draw.rect(surf, body_color, (sx, sy, sw, sh), border_radius=2)
-                # Eye
-                eye_r = max(1, sw // 6)
-                pygame.draw.circle(
-                    surf,
-                    (int(rd[0] * shade), int(rd[1] * shade), int(rd[2] * shade)),
-                    (sx + sw // 2 + eye_r, sy + sh // 3),
-                    eye_r,
-                )
-                # Spikes on top
-                for i in range(3):
-                    spike_x = sx + sw // 4 + i * (sw // 4)
-                    pygame.draw.polygon(
-                        surf,
-                        body_color,
-                        [
-                            (spike_x - 1, sy),
-                            (spike_x, sy - max(2, sh // 4)),
-                            (spike_x + 1, sy),
-                        ],
-                    )
-            else:
-                # ANGRY resident - red tinted, X eyes!
-                angry_c = (
-                    min(255, int((rc[0] + 40) * shade)),
-                    max(0, int((rc[1] - 20) * shade)),
-                    max(0, int((rc[2] - 20) * shade)),
-                )
-                pygame.draw.rect(surf, angry_c, (sx, sy, sw, sh), border_radius=2)
-                # Red outline
-                pygame.draw.rect(
-                    surf,
-                    (int(180 * shade), int(30 * shade), int(30 * shade)),
-                    (sx, sy, sw, sh),
-                    max(1, sw // 8),
-                    border_radius=2,
-                )
-                # X eyes
-                ex = sx + sw // 2
-                ey = sy + sh // 3
-                er = max(2, sw // 5)
-                red_eye = (int(200 * shade), 0, 0)
-                pygame.draw.line(
-                    surf, red_eye, (ex - er, ey - er), (ex + er, ey + er), 2
-                )
-                pygame.draw.line(
-                    surf, red_eye, (ex + er, ey - er), (ex - er, ey + er), 2
-                )
-                # Angry spikes (pointier)
-                for i in range(3):
-                    spike_x = sx + sw // 4 + i * (sw // 4)
-                    pygame.draw.polygon(
-                        surf,
-                        angry_c,
-                        [
-                            (spike_x - 1, sy),
-                            (spike_x, sy - max(3, sh // 3)),
-                            (spike_x + 1, sy),
-                        ],
-                    )
-                # Walking legs
-                if bld.resident_walk_frame > 0:
-                    leg_off = int(
-                        math.sin(bld.resident_walk_frame * 0.3) * max(2, sw // 5)
-                    )
-                    leg_color = (int(40 * shade), int(40 * shade), int(40 * shade))
-                    pygame.draw.line(
-                        surf,
-                        leg_color,
-                        (sx + sw // 3, sy + sh),
-                        (sx + sw // 3 + leg_off, sy + sh + max(2, sh // 3)),
-                        max(1, sw // 8),
-                    )
-                    pygame.draw.line(
-                        surf,
-                        leg_color,
-                        (sx + 2 * sw // 3, sy + sh),
-                        (sx + 2 * sw // 3 - leg_off, sy + sh + max(2, sh // 3)),
-                        max(1, sw // 8),
-                    )
-
-        _draw_interior_billboard(
-            bld.resident_x, bld.resident_y, _draw_resident_fp, 16, 16
-        )
-
-    # Draw the chip bag in first person!
-    if not bld.chips_stolen and bld.chips_x > 0:
-
-        def _draw_chips_fp(surf, sx, sy, sw, sh, dist):
-            shade = max(0.3, 1.0 - dist / 400)
-            # Orange/yellow chip bag
-            bag_color = (int(220 * shade), int(160 * shade), int(30 * shade))
-            pygame.draw.rect(surf, bag_color, (sx, sy, sw, sh), border_radius=2)
-            # Red stripe
-            stripe_h = max(1, sh // 3)
-            stripe_y = sy + sh // 3
-            pygame.draw.rect(
-                surf,
-                (int(200 * shade), int(40 * shade), int(40 * shade)),
-                (sx, stripe_y, sw, stripe_h),
-            )
-            # Outline
-            pygame.draw.rect(
-                surf,
-                (int(150 * shade), int(100 * shade), int(20 * shade)),
-                (sx, sy, sw, sh),
-                1,
-                border_radius=2,
-            )
-
-        _draw_interior_billboard(bld.chips_x, bld.chips_y, _draw_chips_fp, 10, 12)
 
 
 def draw_jumpscare(surface, frame, level=1):
@@ -3864,9 +2333,7 @@ is_walking = False
 # "angle" is the direction the burrb is looking, measured in
 # radians. 0 = looking right, pi/2 = looking down, pi = left, etc.
 # Think of it like a compass but using math angles.
-first_person = False
 burrb_angle = 0.0  # start facing right
-turn_speed = 0.04  # how fast you rotate (radians per frame)
 
 # Building interiors!
 # When this is not None, the burrb is inside a building.
@@ -3999,8 +2466,7 @@ TOUCH_BUTTONS = [
     ("E", _bx, SCREEN_HEIGHT - _br - 12, _br, "action_e"),
     ("O", _bx, SCREEN_HEIGHT - _br * 3 - 20, _br, "action_o"),
     # Second column
-    ("VIEW", _bx2, SCREEN_HEIGHT - _br - 12, _br, "toggle_view"),
-    ("SHOP", _bx2, SCREEN_HEIGHT - _br * 3 - 20, _br, "toggle_shop"),
+    ("SHOP", _bx2, SCREEN_HEIGHT - _br - 12, _br, "toggle_shop"),
 ]
 
 # Extra ability buttons (only shown when unlocked)
@@ -4084,7 +2550,7 @@ def draw_touch_buttons(surface):
             surface.blit(txt, (bx - txt.get_width() // 2, by - txt.get_height() // 2))
 
     # Draw move target indicator if active (small pulsing circle)
-    if touch_move_target is not None and not first_person:
+    if touch_move_target is not None:
         tgt_x, tgt_y = touch_move_target
         if inside_building is not None:
             # Interior coords to screen coords
@@ -4219,7 +2685,7 @@ def draw_shop(surface):
 async def main():
     """Main game loop, async for Pygbag web support."""
     global running, burrb_x, burrb_y, burrb_angle, facing_left
-    global walk_frame, is_walking, first_person
+    global walk_frame, is_walking
     global shop_open, shop_cursor
     global inside_building, interior_x, interior_y
     global saved_outdoor_x, saved_outdoor_y, saved_outdoor_angle
@@ -4284,9 +2750,6 @@ async def main():
                     # Skip all other game input when shop is open
                     continue
 
-                if event.key == pygame.K_SPACE:
-                    first_person = not first_person
-
                 # Press O to shoot the tongue!
                 if event.key == pygame.K_o:
                     if not tongue_active and inside_building is None:
@@ -4295,13 +2758,10 @@ async def main():
                         tongue_retracting = False
                         tongue_hit_npc = None
                         # Tongue shoots in the direction the burrb is facing
-                        if first_person:
-                            tongue_angle = burrb_angle
+                        if facing_left:
+                            tongue_angle = math.pi  # left
                         else:
-                            if facing_left:
-                                tongue_angle = math.pi  # left
-                            else:
-                                tongue_angle = 0.0  # right
+                            tongue_angle = 0.0  # right
 
                 # Press E to enter/exit buildings!
                 if event.key == pygame.K_e:
@@ -4356,6 +2816,20 @@ async def main():
                                 bld.chips_stolen = True
                                 bld.resident_angry = True  # uh oh!
                                 chips_collected += 1
+
+                        # Try to shake the bed! (check if near the bed)
+                        if not bld.bed_shaken and bld.bed_x > 0:
+                            bed_dx = interior_x - bld.bed_x
+                            bed_dy = interior_y - bld.bed_y
+                            bed_dist = math.sqrt(bed_dx * bed_dx + bed_dy * bed_dy)
+                            if bed_dist < 30:  # close enough to shake!
+                                bld.bed_shaken = True
+                                # 30% chance a monster crawls out!
+                                if random.random() < 0.3:
+                                    bld.bed_monster = True
+                                    bld.monster_active = True
+                                    bld.monster_x = bld.bed_x
+                                    bld.monster_y = bld.bed_y
 
                         # Try to exit the building (check if near interior door)
                         if is_at_interior_door(inside_building, interior_x, interior_y):
@@ -4484,17 +2958,10 @@ async def main():
                             # Inside a building: figure out interior coords from screen
                             bld = inside_building
                             tile = bld.interior_tile
-                            if first_person:
-                                # In first-person interior, tapping doesn't set move target
-                                pass
-                            else:
-                                # Top-down interior: screen is centered on burrb
-                                icam_x = interior_x - SCREEN_WIDTH // 2
-                                icam_y = interior_y - SCREEN_HEIGHT // 2
-                                touch_move_target = (tx + icam_x, ty + icam_y)
-                        elif first_person:
-                            # First person outdoor: tap left/right to turn, upper to walk
-                            pass  # handled in FINGERMOTION / held check
+                            # Top-down interior: screen is centered on burrb
+                            icam_x = interior_x - SCREEN_WIDTH // 2
+                            icam_y = interior_y - SCREEN_HEIGHT // 2
+                            touch_move_target = (tx + icam_x, ty + icam_y)
                         else:
                             # Top-down outdoor: convert screen coords to world coords
                             touch_move_target = (tx + cam_x, ty + cam_y)
@@ -4524,11 +2991,6 @@ async def main():
                             elif btn == "action_o":
                                 fake_event = pygame.event.Event(
                                     pygame.KEYDOWN, key=pygame.K_o
-                                )
-                                pygame.event.post(fake_event)
-                            elif btn == "toggle_view":
-                                fake_event = pygame.event.Event(
-                                    pygame.KEYDOWN, key=pygame.K_SPACE
                                 )
                                 pygame.event.post(fake_event)
                             elif btn == "toggle_shop":
@@ -4586,11 +3048,10 @@ async def main():
                     touch_btn_pressed = None
                     if not shop_open:
                         if inside_building is not None:
-                            if not first_person:
-                                icam_x = interior_x - SCREEN_WIDTH // 2
-                                icam_y = interior_y - SCREEN_HEIGHT // 2
-                                touch_move_target = (tx + icam_x, ty + icam_y)
-                        elif not first_person:
+                            icam_x = interior_x - SCREEN_WIDTH // 2
+                            icam_y = interior_y - SCREEN_HEIGHT // 2
+                            touch_move_target = (tx + icam_x, ty + icam_y)
+                        else:
                             touch_move_target = (tx + cam_x, ty + cam_y)
 
             if event.type == pygame.MOUSEMOTION and touch_held:
@@ -4608,10 +3069,6 @@ async def main():
                         elif btn == "action_o":
                             pygame.event.post(
                                 pygame.event.Event(pygame.KEYDOWN, key=pygame.K_o)
-                            )
-                        elif btn == "toggle_view":
-                            pygame.event.post(
-                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE)
                             )
                         elif btn == "toggle_shop":
                             pygame.event.post(
@@ -4779,53 +3236,27 @@ async def main():
         ):
             touch_move_target = None
 
-        if first_person:
-            # FIRST PERSON CONTROLS:
-            # Left/Right (or A/D) = TURN (rotate which way you're looking)
-            # Up/Down (or W/S) = WALK forward/backward in the direction you face
-            if keys[pygame.K_LEFT] or keys[pygame.K_a]:
-                burrb_angle -= turn_speed
-            if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
-                burrb_angle += turn_speed
+        # TOP-DOWN CONTROLS:
+        # Arrow keys / WASD move in that direction directly
+        if keys[pygame.K_LEFT] or keys[pygame.K_a]:
+            dx = -current_speed
+            facing_left = True
+        if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+            dx = current_speed
+            facing_left = False
+        if keys[pygame.K_UP] or keys[pygame.K_w]:
+            dy = -current_speed
+        if keys[pygame.K_DOWN] or keys[pygame.K_s]:
+            dy = current_speed
 
-            # Forward/backward movement uses the angle to figure out
-            # which direction to actually move in the world.
-            # cos(angle) gives the X component, sin(angle) gives the Y component.
-            if keys[pygame.K_UP] or keys[pygame.K_w]:
-                dx = math.cos(burrb_angle) * current_speed
-                dy = math.sin(burrb_angle) * current_speed
-            if keys[pygame.K_DOWN] or keys[pygame.K_s]:
-                dx = -math.cos(burrb_angle) * current_speed
-                dy = -math.sin(burrb_angle) * current_speed
+        # Diagonal movement shouldn't be faster
+        if dx != 0 and dy != 0:
+            dx *= 0.707
+            dy *= 0.707
 
-            # Keep angle in the range 0 to 2*pi (a full circle)
-            burrb_angle = burrb_angle % (2 * math.pi)
-
-            # Update facing_left for when we switch back to top-down
-            facing_left = math.pi / 2 < burrb_angle < 3 * math.pi / 2
-        else:
-            # TOP-DOWN CONTROLS (the original controls):
-            # Arrow keys / WASD move in that direction directly
-            if keys[pygame.K_LEFT] or keys[pygame.K_a]:
-                dx = -current_speed
-                facing_left = True
-            if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
-                dx = current_speed
-                facing_left = False
-            if keys[pygame.K_UP] or keys[pygame.K_w]:
-                dy = -current_speed
-            if keys[pygame.K_DOWN] or keys[pygame.K_s]:
-                dy = current_speed
-
-            # Diagonal movement shouldn't be faster
-            if dx != 0 and dy != 0:
-                dx *= 0.707
-                dy *= 0.707
-
-            # Update the angle to match movement direction, so when you
-            # switch to first person you're already looking the right way
-            if dx != 0 or dy != 0:
-                burrb_angle = math.atan2(dy, dx)
+        # Update the angle to match movement direction
+        if dx != 0 or dy != 0:
+            burrb_angle = math.atan2(dy, dx)
 
         # --- TOUCH MOVEMENT ---
         # If no keyboard input and we have a touch move target, walk toward it!
@@ -4845,31 +3276,13 @@ async def main():
                 dx = (tmx / touch_dist) * current_speed
                 dy = (tmy / touch_dist) * current_speed
                 # Update facing direction
-                if not first_person:
-                    facing_left = dx < 0
-                    burrb_angle = math.atan2(dy, dx)
-                else:
-                    burrb_angle = math.atan2(tmy, tmx)
+                facing_left = dx < 0
+                burrb_angle = math.atan2(dy, dx)
             else:
                 # Arrived at target!
                 touch_move_target = None
 
-        # First-person touch: swipe to turn, hold upper screen to walk forward
-        if touch_active and touch_held and first_person and touch_btn_pressed is None:
-            tx, ty = touch_pos
-            sx, sy = touch_start_pos
-            # Horizontal swipe = turning
-            swipe_dx = tx - sx
-            if abs(swipe_dx) > 5:
-                burrb_angle += swipe_dx * 0.003
-                burrb_angle = burrb_angle % (2 * math.pi)
-                facing_left = math.pi / 2 < burrb_angle < 3 * math.pi / 2
-            # Tap in upper half of screen = walk forward
-            if ty < SCREEN_HEIGHT * 0.5:
-                dx = math.cos(burrb_angle) * current_speed
-                dy = math.sin(burrb_angle) * current_speed
-
-        # Try to move (check collisions) - works the same in both modes!
+        # Try to move (check collisions)!
         is_walking = dx != 0 or dy != 0
 
         if inside_building is not None:
@@ -4967,6 +3380,41 @@ async def main():
                     if can_move_interior(bld, interior_x, new_py):
                         interior_y = new_py
 
+        # --- UPDATE MONSTER (6-legged bed creature chase!) ---
+        # If the monster crawled out from under the bed, it chases the player!
+        # It's faster than the resident (speed 2.2 vs 1.8) and ignores invisibility!
+        if inside_building is not None and inside_building.monster_active:
+            bld = inside_building
+            # Move monster toward the player
+            mon_dx = interior_x - bld.monster_x
+            mon_dy = interior_y - bld.monster_y
+            mon_dist = math.sqrt(mon_dx * mon_dx + mon_dy * mon_dy)
+            if mon_dist > 0:
+                mon_move_x = (mon_dx / mon_dist) * bld.monster_speed
+                mon_move_y = (mon_dy / mon_dist) * bld.monster_speed
+                new_mx = bld.monster_x + mon_move_x
+                new_my = bld.monster_y + mon_move_y
+                if can_move_interior(bld, new_mx, bld.monster_y):
+                    bld.monster_x = new_mx
+                if can_move_interior(bld, bld.monster_x, new_my):
+                    bld.monster_y = new_my
+                bld.monster_walk_frame += 1
+
+            # Did the monster catch the player? Push them back!
+            mcatch_dx = interior_x - bld.monster_x
+            mcatch_dy = interior_y - bld.monster_y
+            mcatch_dist = math.sqrt(mcatch_dx * mcatch_dx + mcatch_dy * mcatch_dy)
+            if mcatch_dist < 14:  # caught!
+                if mcatch_dist > 0:
+                    mpush_x = (mcatch_dx / mcatch_dist) * 10
+                    mpush_y = (mcatch_dy / mcatch_dist) * 10
+                    new_px = interior_x + mpush_x
+                    new_py = interior_y + mpush_y
+                    if can_move_interior(bld, new_px, interior_y):
+                        interior_x = new_px
+                    if can_move_interior(bld, interior_x, new_py):
+                        interior_y = new_py
+
         # --- UPDATE NPCs ---
         # Every frame, each NPC takes a step and maybe changes direction
         # UNLESS they're frozen by the Freeze ability!
@@ -5034,36 +3482,8 @@ async def main():
         # --- DRAWING ---
         if inside_building is not None:
             # ========== INSIDE A BUILDING ==========
-            if first_person:
-                # First person inside the building
-                draw_interior_first_person(
-                    screen, inside_building, interior_x, interior_y, burrb_angle
-                )
-                # Beak at bottom
-                beak_cx = SCREEN_WIDTH // 2
-                beak_cy = SCREEN_HEIGHT - 50
-                pygame.draw.polygon(
-                    screen,
-                    BURRB_ORANGE,
-                    [
-                        (beak_cx - 12, beak_cy + 10),
-                        (beak_cx, beak_cy - 8),
-                        (beak_cx + 12, beak_cy + 10),
-                    ],
-                )
-                pygame.draw.polygon(
-                    screen,
-                    (200, 130, 20),
-                    [
-                        (beak_cx - 12, beak_cy + 10),
-                        (beak_cx, beak_cy - 8),
-                        (beak_cx + 12, beak_cy + 10),
-                    ],
-                    2,
-                )
-            else:
-                # Top-down inside the building
-                draw_interior_topdown(screen, inside_building, interior_x, interior_y)
+            # Top-down inside the building
+            draw_interior_topdown(screen, inside_building, interior_x, interior_y)
 
             # Door prompt if near interior door
             if is_at_interior_door(inside_building, interior_x, interior_y):
@@ -5102,6 +3522,30 @@ async def main():
                     screen.blit(cl_shadow, (clpx + 1, SCREEN_HEIGHT // 2 + 41))
                     screen.blit(cl_prompt, (clpx, SCREEN_HEIGHT // 2 + 40))
 
+            # Bed prompt if near the bed!
+            if not bld.bed_shaken and bld.bed_x > 0:
+                bed_dx = interior_x - bld.bed_x
+                bed_dy = interior_y - bld.bed_y
+                bed_dist = math.sqrt(bed_dx * bed_dx + bed_dy * bed_dy)
+                if bed_dist < 30:
+                    bed_prompt = font.render(
+                        "Press E to shake bed!", True, (180, 140, 220)
+                    )
+                    bed_shadow = font.render("Press E to shake bed!", True, BLACK)
+                    bpx = SCREEN_WIDTH // 2 - bed_prompt.get_width() // 2
+                    screen.blit(bed_shadow, (bpx + 1, SCREEN_HEIGHT // 2 + 11))
+                    screen.blit(bed_prompt, (bpx, SCREEN_HEIGHT // 2 + 10))
+
+            # Monster warning text!
+            if bld.monster_active:
+                mon_text = font.render("SOMETHING CRAWLED OUT!", True, (200, 0, 200))
+                mon_shadow = font.render("SOMETHING CRAWLED OUT!", True, BLACK)
+                mpx = SCREEN_WIDTH // 2 - mon_text.get_width() // 2
+                # Flash every half-second
+                if (pygame.time.get_ticks() // 350) % 2 == 0:
+                    screen.blit(mon_shadow, (mpx + 1, 91))
+                    screen.blit(mon_text, (mpx, 90))
+
             # "Found chips in closet!" message
             if closet_msg_timer > 0:
                 found_text = font.render(
@@ -5121,96 +3565,6 @@ async def main():
                 if (pygame.time.get_ticks() // 400) % 2 == 0:
                     screen.blit(warn_shadow, (wpx + 1, 71))
                     screen.blit(warn_text, (wpx, 70))
-
-        elif first_person:
-            # ========== FIRST PERSON MODE (Doom-style!) ==========
-            # Draw the 3D raycasted view and get the depth buffer back
-            depth_buf = draw_first_person(screen, burrb_x, burrb_y, burrb_angle)
-
-            # Draw NPCs as billboard sprites in 3D with depth testing!
-            # They properly hide behind walls now, just like in Doom!
-            draw_npcs_first_person(
-                screen, burrb_x, burrb_y, burrb_angle, npcs, depth_buf
-            )
-
-            # Draw cars as billboard sprites in 3D with depth testing!
-            draw_cars_first_person(
-                screen, burrb_x, burrb_y, burrb_angle, cars, depth_buf
-            )
-
-            # Draw the minimap in the corner so you don't get lost
-            draw_minimap(screen, burrb_x, burrb_y, burrb_angle)
-
-            # Draw a tiny burrb beak at the bottom of screen (like a nose)
-            beak_cx = SCREEN_WIDTH // 2
-            beak_cy = SCREEN_HEIGHT - 50
-            pygame.draw.polygon(
-                screen,
-                BURRB_ORANGE,
-                [
-                    (beak_cx - 12, beak_cy + 10),
-                    (beak_cx, beak_cy - 8),
-                    (beak_cx + 12, beak_cy + 10),
-                ],
-            )
-            pygame.draw.polygon(
-                screen,
-                (200, 130, 20),
-                [
-                    (beak_cx - 12, beak_cy + 10),
-                    (beak_cx, beak_cy - 8),
-                    (beak_cx + 12, beak_cy + 10),
-                ],
-                2,
-            )
-
-            # Draw the tongue in first-person mode!
-            # It shoots out from the beak tip toward the center of the screen
-            if tongue_active and tongue_length > 0:
-                # Tongue goes from beak tip toward the center/horizon
-                eff_tmax = tongue_max_length * (2.0 if ability_unlocked[2] else 1.0)
-                t_progress = tongue_length / eff_tmax
-                tongue_start_x = beak_cx
-                tongue_start_y = beak_cy - 8  # tip of beak
-                # Target: center of screen (horizon where it would hit something)
-                tongue_target_x = SCREEN_WIDTH // 2
-                tongue_target_y = SCREEN_HEIGHT // 2 - 30
-                # Interpolate from beak to target based on progress
-                tongue_end_x = int(
-                    tongue_start_x + (tongue_target_x - tongue_start_x) * t_progress
-                )
-                tongue_end_y = int(
-                    tongue_start_y + (tongue_target_y - tongue_start_y) * t_progress
-                )
-                # Tongue gets thinner as it extends further
-                tongue_thick = max(2, int(6 * (1.0 - t_progress * 0.5)))
-                # Main tongue
-                pygame.draw.line(
-                    screen,
-                    (220, 80, 100),
-                    (tongue_start_x, tongue_start_y),
-                    (tongue_end_x, tongue_end_y),
-                    tongue_thick,
-                )
-                # Lighter center
-                pygame.draw.line(
-                    screen,
-                    (255, 140, 160),
-                    (tongue_start_x, tongue_start_y),
-                    (tongue_end_x, tongue_end_y),
-                    max(1, tongue_thick - 2),
-                )
-                # Tip blob
-                tip_r = max(3, int(6 * (1.0 - t_progress * 0.3)))
-                pygame.draw.circle(
-                    screen, (220, 60, 80), (tongue_end_x, tongue_end_y), tip_r
-                )
-                pygame.draw.circle(
-                    screen,
-                    (255, 120, 140),
-                    (tongue_end_x, tongue_end_y),
-                    max(1, tip_r - 2),
-                )
 
         else:
             # ========== TOP-DOWN MODE (the original view) ==========
@@ -5441,18 +3795,13 @@ async def main():
         if inside_building is not None:
             mode_text = font.render("[INSIDE]", True, YELLOW)
             mode_shadow = font.render("[INSIDE]", True, BLACK)
-            if first_person:
-                help_msg = "A/D turn, W/S walk  |  E take/exit  |  SPACE toggle view  |  ESC quit"
-            else:
-                help_msg = "Arrows/WASD walk  |  E take/exit  |  SPACE toggle view  |  ESC quit"
-        elif first_person:
-            mode_text = font.render("[FIRST PERSON]", True, BURRB_ORANGE)
-            mode_shadow = font.render("[FIRST PERSON]", True, BLACK)
-            help_msg = "A/D turn, W/S walk  |  O tongue  |  E enter  |  TAB shop  |  SPACE top-down"
+            help_msg = "Arrows/WASD walk  |  E take/exit  |  ESC quit"
         else:
             mode_text = font.render("[TOP DOWN]", True, BURRB_LIGHT_BLUE)
             mode_shadow = font.render("[TOP DOWN]", True, BLACK)
-            help_msg = "Arrows/WASD walk  |  O tongue  |  E enter  |  TAB shop  |  SPACE first person"
+            help_msg = (
+                "Arrows/WASD walk  |  O tongue  |  E enter  |  TAB shop  |  ESC quit"
+            )
 
         screen.blit(mode_shadow, (12, 42))
         screen.blit(mode_text, (10, 40))
