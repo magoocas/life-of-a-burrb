@@ -1142,55 +1142,6 @@ def draw_biome_ground(surface, cam_x, cam_y):
             pygame.draw.rect(surface, color, (rx, ry, chunk + 1, chunk + 1))
 
 
-def draw_minimap(surface):
-    """Draw a small minimap in the corner so you don't get lost!"""
-    # Minimap size and position (bottom-left corner)
-    mm_w = 140
-    mm_h = 140
-    mm_x = 8
-    mm_y = SCREEN_HEIGHT - mm_h - 8
-    mm_scale_x = mm_w / WORLD_WIDTH
-    mm_scale_y = mm_h / WORLD_HEIGHT
-
-    # Background
-    mm_surf = pygame.Surface((mm_w, mm_h), pygame.SRCALPHA)
-
-    # Draw biome colors
-    mm_chunk = WORLD_WIDTH // 14  # ~714px chunks
-    for wx in range(0, WORLD_WIDTH, mm_chunk):
-        for wy in range(0, WORLD_HEIGHT, mm_chunk):
-            biome = get_biome(wx + mm_chunk // 2, wy + mm_chunk // 2)
-            color = BIOME_COLORS[biome]
-            rx = int(wx * mm_scale_x)
-            ry = int(wy * mm_scale_y)
-            rw = max(1, int(mm_chunk * mm_scale_x) + 1)
-            rh = max(1, int(mm_chunk * mm_scale_y) + 1)
-            pygame.draw.rect(mm_surf, color, (rx, ry, rw, rh))
-
-    # Draw buildings as tiny dots
-    for b in buildings:
-        bx = int(b.x * mm_scale_x)
-        by = int(b.y * mm_scale_y)
-        pygame.draw.rect(mm_surf, (100, 100, 100), (bx, by, 2, 2))
-
-    # Draw the player as a bright dot
-    px = int(burrb_x * mm_scale_x)
-    py = int(burrb_y * mm_scale_y)
-    pygame.draw.circle(mm_surf, (255, 50, 50), (px, py), 3)
-    pygame.draw.circle(mm_surf, (255, 200, 200), (px, py), 1)
-
-    # Border
-    pygame.draw.rect(mm_surf, (200, 200, 200), (0, 0, mm_w, mm_h), 2)
-
-    # Semi-transparent background behind minimap
-    bg_surf = pygame.Surface((mm_w + 4, mm_h + 4), pygame.SRCALPHA)
-    pygame.draw.rect(
-        bg_surf, (0, 0, 0, 120), (0, 0, mm_w + 4, mm_h + 4), border_radius=4
-    )
-    surface.blit(bg_surf, (mm_x - 2, mm_y - 2))
-    surface.blit(mm_surf, (mm_x, mm_y))
-
-
 def draw_burrb(surface, x, y, cam_x, cam_y, facing_left, walk_frame):
     """
     Draw the burrb character!
@@ -4225,9 +4176,6 @@ async def main():
             biome_shadow = font.render(biome_names[cur_biome], True, (0, 0, 0))
             screen.blit(biome_shadow, (SCREEN_WIDTH - biome_label.get_width() - 11, 41))
             screen.blit(biome_label, (SCREEN_WIDTH - biome_label.get_width() - 12, 40))
-
-            # Minimap!
-            draw_minimap(screen)
 
         # --- UI overlay (shown in both modes) ---
         # Game title
