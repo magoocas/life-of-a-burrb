@@ -4342,11 +4342,6 @@ async def main():
                                         JUMPSCARE_DURATION + scare_level * 60
                                     )
                                     jumpscare_frame = 0
-                                    # Lose more chips the scarier it gets!
-                                    chips_lost = min(scare_level, chips_collected)
-                                    chips_collected = max(
-                                        0, chips_collected - chips_lost
-                                    )
                                 else:
                                     # Found 2 chips!
                                     chips_collected += 2
