@@ -2836,6 +2836,7 @@ TOUCH_BUTTONS = [
     ("O", _bx, SCREEN_HEIGHT - _br * 3 - 20, _br, "action_o"),
     # Second column
     ("SHOP", _bx2, SCREEN_HEIGHT - _br - 12, _br, "toggle_shop"),
+    ("UNSTUCK", _bx2, SCREEN_HEIGHT - _br * 3 - 20, _br, "unstuck"),
 ]
 
 # Extra ability buttons (only shown when unlocked)
@@ -3119,6 +3120,30 @@ async def main():
                     # Skip all other game input when shop is open
                     continue
 
+                # Press U to unstuck! Teleports you to a random clear spot.
+                if event.key == pygame.K_u:
+                    if inside_building is not None:
+                        # If stuck inside a building, just exit it
+                        burrb_x = saved_outdoor_x
+                        burrb_y = saved_outdoor_y
+                        burrb_angle = saved_outdoor_angle
+                        inside_building = None
+                        touch_move_target = None
+                    else:
+                        # Find a random spot with no buildings under it
+                        for _try in range(200):
+                            rx = random.randint(100, WORLD_WIDTH - 100)
+                            ry = random.randint(100, WORLD_HEIGHT - 100)
+                            test_rect = pygame.Rect(rx - 15, ry - 15, 30, 30)
+                            blocked = any(
+                                test_rect.colliderect(b.get_rect()) for b in buildings
+                            )
+                            if not blocked:
+                                burrb_x = float(rx)
+                                burrb_y = float(ry)
+                                touch_move_target = None
+                                break
+
                 # Press O to shoot the tongue!
                 if event.key == pygame.K_o:
                     if not tongue_active and inside_building is None:
@@ -3397,6 +3422,11 @@ async def main():
                                     pygame.KEYDOWN, key=pygame.K_q
                                 )
                                 pygame.event.post(fake_event)
+                            elif btn == "unstuck":
+                                fake_event = pygame.event.Event(
+                                    pygame.KEYDOWN, key=pygame.K_u
+                                )
+                                pygame.event.post(fake_event)
 
                     touch_held = False
                     touch_btn_pressed = None
@@ -3466,6 +3496,10 @@ async def main():
                         elif btn == "ability_q":
                             pygame.event.post(
                                 pygame.event.Event(pygame.KEYDOWN, key=pygame.K_q)
+                            )
+                        elif btn == "unstuck":
+                            pygame.event.post(
+                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_u)
                             )
                 touch_held = False
                 touch_btn_pressed = None
