@@ -2874,6 +2874,13 @@ tongue_hit_npc = None  # did we hit someone? (for visual feedback)
 # Every building has a bag of chips. Steal them all!
 chips_collected = 2
 
+# Biome currencies! Each biome has its own special collectible.
+# You spend these to buy biome-specific abilities in the shop.
+berries_collected = 0  # Forest biome - nature powers
+gems_collected = 0  # Desert biome - power moves
+snowflakes_collected = 0  # Snow biome - ice powers
+mushrooms_collected = 0  # Swamp biome - spooky powers
+
 # Jump scare from closets!
 # When you open a closet and get unlucky, a scary birb jumps out!
 jumpscare_timer = 0  # frames remaining for jump scare (0 = not active)
@@ -2943,6 +2950,94 @@ earthquake_cooldown = 0  # frames until next earthquake
 earthquake_shake = 0  # frames remaining for screen shake
 EARTHQUAKE_DURATION = 240  # how long the stun lasts (4 seconds)
 EARTHQUAKE_RADIUS = 300  # how far the earthquake reaches (pixels)
+
+# ============================================================
+# BIOME ABILITIES!
+# ============================================================
+# Each biome has 3 special abilities bought with that biome's currency.
+# They're organized by biome: forest (berries), desert (gems),
+# snow (snowflakes), swamp (mushrooms).
+#
+# Format: (name, cost, key_hint, description, currency)
+
+BIOME_ABILITIES = [
+    # --- Forest abilities (berries) ---
+    ("Vine Trap", 3, "V", "Trap nearby burrbs in vines!", "berry"),
+    ("Camouflage", 4, "C", "Blend into the ground!", "berry"),
+    ("Nature Heal", 5, "H", "Push enemies away!", "berry"),
+    # --- Desert abilities (gems) ---
+    ("Sandstorm", 4, "N", "Blind all nearby burrbs!", "gem"),
+    ("Magnet", 3, "M", "Pull collectibles toward you!", "gem"),
+    ("Fire Dash", 5, "R", "Dash with a trail of fire!", "gem"),
+    # --- Snow abilities (snowflakes) ---
+    ("Ice Wall", 3, "L", "Create a wall of ice!", "snowflake"),
+    ("Blizzard", 5, "Z", "Freeze AND push burrbs!", "snowflake"),
+    ("Snow Cloak", 4, "X", "Roll fast as a snowball!", "snowflake"),
+    # --- Swamp abilities (mushrooms) ---
+    ("Poison Cloud", 3, "P", "Leave a toxic cloud!", "mushroom"),
+    ("Shadow Step", 4, "J", "Teleport to nearest shadow!", "mushroom"),
+    ("Swamp Monster", 6, "K", "Summon a monster ally!", "mushroom"),
+]
+
+biome_ability_unlocked = [False] * len(BIOME_ABILITIES)
+
+# Biome ability timers
+vine_trap_timer = 0  # frames remaining for vine trap
+vine_trap_cooldown = 0  # cooldown before next use
+VINE_TRAP_DURATION = 240  # 4 seconds
+VINE_TRAP_RADIUS = 200  # how far the vines reach
+
+camouflage_timer = 0  # frames remaining for camouflage
+CAMOUFLAGE_DURATION = 300  # 5 seconds
+
+nature_heal_timer = 0  # frames remaining for heal push
+nature_heal_cooldown = 0
+NATURE_HEAL_RADIUS = 250
+
+sandstorm_timer = 0  # frames remaining for sandstorm
+sandstorm_cooldown = 0
+SANDSTORM_DURATION = 240  # 4 seconds
+SANDSTORM_RADIUS = 300
+
+magnet_timer = 0  # frames remaining for magnet pull
+magnet_cooldown = 0
+MAGNET_DURATION = 300  # 5 seconds
+MAGNET_RADIUS = 400  # how far it pulls from
+
+fire_dash_active = 0  # frames remaining in fire dash
+fire_dash_cooldown = 0
+fire_trail = []  # list of (x, y, timer) for fire particles
+
+ice_wall_cooldown = 0
+ice_walls = []  # list of (x, y, timer) for ice wall segments
+
+blizzard_timer = 0  # frames remaining for blizzard
+blizzard_cooldown = 0
+BLIZZARD_DURATION = 180  # 3 seconds
+BLIZZARD_RADIUS = 250
+
+snow_cloak_timer = 0  # frames remaining as snowball
+snow_cloak_cooldown = 0
+SNOW_CLOAK_DURATION = 300  # 5 seconds
+
+poison_clouds = []  # list of [x, y, timer] for poison clouds
+poison_cooldown = 0
+POISON_CLOUD_DURATION = 360  # 6 seconds - lasts a while!
+POISON_CLOUD_RADIUS = 60  # size of each cloud
+
+shadow_step_cooldown = 0
+
+swamp_monster_active = False  # is the monster ally alive?
+swamp_monster_x = 0.0
+swamp_monster_y = 0.0
+swamp_monster_timer = 0  # frames remaining
+swamp_monster_walk = 0  # animation frame
+SWAMP_MONSTER_DURATION = 600  # 10 seconds!
+SWAMP_MONSTER_SPEED = 2.0
+SWAMP_MONSTER_RADIUS = 300  # how far it chases enemies
+
+# The shop now has tabs! LEFT/RIGHT arrows switch between tabs.
+shop_tab = 0  # 0=chips, 1=berries, 2=gems, 3=snowflakes, 4=mushrooms
 
 # Font for UI
 font = pygame.font.Font(None, 28)
@@ -3099,71 +3194,202 @@ def can_move_to(x, y):
     return True
 
 
+def get_shop_tab_info(tab):
+    """Get the abilities list, currency count, currency name, and colors for a shop tab."""
+    if tab == 0:
+        return (
+            ABILITIES,
+            chips_collected,
+            "chips",
+            (255, 200, 50),
+            (40, 30, 60),
+            (100, 80, 160),
+            ability_unlocked,
+            list(range(len(ABILITIES))),
+        )
+    elif tab == 1:
+        items = [(n, c, k, d) for n, c, k, d, cur in BIOME_ABILITIES if cur == "berry"]
+        indices = [
+            i for i, (_, _, _, _, cur) in enumerate(BIOME_ABILITIES) if cur == "berry"
+        ]
+        return (
+            items,
+            berries_collected,
+            "berries",
+            (255, 100, 120),
+            (50, 25, 30),
+            (180, 80, 100),
+            biome_ability_unlocked,
+            indices,
+        )
+    elif tab == 2:
+        items = [(n, c, k, d) for n, c, k, d, cur in BIOME_ABILITIES if cur == "gem"]
+        indices = [
+            i for i, (_, _, _, _, cur) in enumerate(BIOME_ABILITIES) if cur == "gem"
+        ]
+        return (
+            items,
+            gems_collected,
+            "gems",
+            (100, 220, 255),
+            (25, 40, 55),
+            (80, 150, 200),
+            biome_ability_unlocked,
+            indices,
+        )
+    elif tab == 3:
+        items = [
+            (n, c, k, d) for n, c, k, d, cur in BIOME_ABILITIES if cur == "snowflake"
+        ]
+        indices = [
+            i
+            for i, (_, _, _, _, cur) in enumerate(BIOME_ABILITIES)
+            if cur == "snowflake"
+        ]
+        return (
+            items,
+            snowflakes_collected,
+            "snowflakes",
+            (200, 220, 255),
+            (30, 35, 55),
+            (100, 130, 200),
+            biome_ability_unlocked,
+            indices,
+        )
+    else:
+        items = [
+            (n, c, k, d) for n, c, k, d, cur in BIOME_ABILITIES if cur == "mushroom"
+        ]
+        indices = [
+            i
+            for i, (_, _, _, _, cur) in enumerate(BIOME_ABILITIES)
+            if cur == "mushroom"
+        ]
+        return (
+            items,
+            mushrooms_collected,
+            "mushrooms",
+            (100, 255, 150),
+            (25, 45, 30),
+            (80, 180, 100),
+            biome_ability_unlocked,
+            indices,
+        )
+
+
 def draw_shop(surface):
     """
-    Draw the ability shop screen!
-    This is a cool menu where you spend your potato chips
-    to unlock awesome new powers for your burrb.
+    Draw the ability shop screen with tabs!
+    LEFT/RIGHT arrows switch between biome currency tabs.
+    Each tab shows abilities you can buy with that currency.
     """
     # Dark semi-transparent overlay
     overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 180))
     surface.blit(overlay, (0, 0))
 
-    # Shop box (sized to fit all abilities)
-    box_w = 500
-    box_h = 90 + len(ABILITIES) * 52 + 40
+    # Get info for current tab
+    (
+        tab_abilities,
+        currency_count,
+        currency_name,
+        cur_color,
+        bg_color,
+        border_color,
+        unlock_list,
+        indices,
+    ) = get_shop_tab_info(shop_tab)
+    num_items = len(tab_abilities)
+
+    # Shop box
+    box_w = 520
+    box_h = 130 + num_items * 52 + 40
     box_x = (SCREEN_WIDTH - box_w) // 2
     box_y = (SCREEN_HEIGHT - box_h) // 2
 
     # Background with border
+    pygame.draw.rect(surface, bg_color, (box_x, box_y, box_w, box_h), border_radius=12)
     pygame.draw.rect(
-        surface, (40, 30, 60), (box_x, box_y, box_w, box_h), border_radius=12
-    )
-    pygame.draw.rect(
-        surface, (100, 80, 160), (box_x, box_y, box_w, box_h), 3, border_radius=12
+        surface, border_color, (box_x, box_y, box_w, box_h), 3, border_radius=12
     )
 
-    # Title
-    title = shop_title_font.render("CHIP SHOP", True, (255, 220, 50))
-    surface.blit(title, (box_x + box_w // 2 - title.get_width() // 2, box_y + 12))
+    # Tab bar at the top
+    tab_names = ["Chips", "Berries", "Gems", "Snowflakes", "Mushrooms"]
+    tab_colors = [
+        (255, 200, 50),  # chips gold
+        (255, 100, 120),  # berries red
+        (100, 220, 255),  # gems cyan
+        (200, 220, 255),  # snowflakes blue-white
+        (100, 255, 150),  # mushrooms green
+    ]
+    tab_w = box_w // 5
+    for ti, tname in enumerate(tab_names):
+        tx = box_x + ti * tab_w
+        ty = box_y + 4
+        tw = tab_w - 2
+        th = 28
+        if ti == shop_tab:
+            pygame.draw.rect(
+                surface, border_color, (tx + 1, ty, tw, th), border_radius=5
+            )
+            ttxt = font.render(tname, True, tab_colors[ti])
+        else:
+            ttxt = font.render(tname, True, (100, 100, 100))
+        surface.blit(ttxt, (tx + tw // 2 - ttxt.get_width() // 2, ty + 5))
 
-    # Chip count
-    chip_str = f"Your chips: {chips_collected}"
-    chip_txt = shop_font.render(chip_str, True, (255, 200, 50))
-    surface.blit(chip_txt, (box_x + box_w // 2 - chip_txt.get_width() // 2, box_y + 52))
+    # Title for current tab
+    tab_titles = [
+        "CHIP SHOP",
+        "BERRY SHOP",
+        "GEM SHOP",
+        "SNOWFLAKE SHOP",
+        "MUSHROOM SHOP",
+    ]
+    title = shop_title_font.render(tab_titles[shop_tab], True, cur_color)
+    surface.blit(title, (box_x + box_w // 2 - title.get_width() // 2, box_y + 38))
+
+    # Currency count
+    cur_str = f"Your {currency_name}: {currency_count}"
+    cur_txt = shop_font.render(cur_str, True, cur_color)
+    surface.blit(cur_txt, (box_x + box_w // 2 - cur_txt.get_width() // 2, box_y + 78))
 
     # Abilities list
-    for i, (name, cost, key_hint, desc) in enumerate(ABILITIES):
-        row_y = box_y + 90 + i * 52
+    for row_i, (name, cost, key_hint, desc) in enumerate(tab_abilities):
+        row_y = box_y + 118 + row_i * 52
+        # Figure out which unlock index to check
+        if shop_tab == 0:
+            unlocked = unlock_list[row_i]
+        else:
+            unlocked = unlock_list[indices[row_i]]
+
         # Highlight selected row
-        if i == shop_cursor:
+        if row_i == shop_cursor:
             pygame.draw.rect(
                 surface,
-                (80, 60, 120),
+                (bg_color[0] + 30, bg_color[1] + 30, bg_color[2] + 30),
                 (box_x + 10, row_y - 4, box_w - 20, 48),
                 border_radius=6,
             )
             pygame.draw.rect(
                 surface,
-                (140, 120, 200),
+                border_color,
                 (box_x + 10, row_y - 4, box_w - 20, 48),
                 2,
                 border_radius=6,
             )
 
         # Already unlocked?
-        if ability_unlocked[i]:
+        if unlocked:
             name_color = (100, 220, 100)  # green = owned
             status = "OWNED"
             status_color = (100, 220, 100)
-        elif chips_collected >= cost:
+        elif currency_count >= cost:
             name_color = (255, 255, 255)  # white = can buy
-            status = f"{cost} chips"
-            status_color = (255, 200, 50)
+            status = f"{cost} {currency_name}"
+            status_color = cur_color
         else:
             name_color = (120, 120, 120)  # gray = too expensive
-            status = f"{cost} chips"
+            status = f"{cost} {currency_name}"
             status_color = (150, 80, 80)
 
         # Name
@@ -3171,7 +3397,7 @@ def draw_shop(surface):
         surface.blit(name_txt, (box_x + 24, row_y))
 
         # Key hint
-        if ability_unlocked[i]:
+        if unlocked:
             key_txt = font.render(f"[{key_hint}]", True, (150, 200, 150))
         else:
             key_txt = font.render(f"[{key_hint}]", True, (100, 100, 100))
@@ -3187,7 +3413,7 @@ def draw_shop(surface):
 
     # Instructions at the bottom
     instr = font.render(
-        "UP/DOWN select  |  ENTER buy  |  TAB close", True, (180, 180, 200)
+        "LEFT/RIGHT tab | UP/DOWN select | ENTER buy | TAB close", True, (180, 180, 200)
     )
     surface.blit(
         instr, (box_x + box_w // 2 - instr.get_width() // 2, box_y + box_h - 30)
@@ -3204,6 +3430,20 @@ async def main():
     global tongue_active, tongue_length, tongue_retracting
     global tongue_angle, tongue_hit_npc
     global chips_collected, ability_unlocked
+    global berries_collected, gems_collected, snowflakes_collected, mushrooms_collected
+    global biome_ability_unlocked, shop_tab
+    global vine_trap_timer, vine_trap_cooldown
+    global camouflage_timer, nature_heal_timer, nature_heal_cooldown
+    global sandstorm_timer, sandstorm_cooldown
+    global magnet_timer, magnet_cooldown
+    global fire_dash_active, fire_dash_cooldown, fire_trail
+    global ice_wall_cooldown, ice_walls
+    global blizzard_timer, blizzard_cooldown
+    global snow_cloak_timer, snow_cloak_cooldown
+    global poison_clouds, poison_cooldown
+    global shadow_step_cooldown
+    global swamp_monster_active, swamp_monster_x, swamp_monster_y
+    global swamp_monster_timer, swamp_monster_walk
     global dash_cooldown, dash_active
     global freeze_timer, invisible_timer, giant_timer, giant_scale
     global bounce_timer, bounce_cooldown, bounce_height
@@ -3247,19 +3487,47 @@ async def main():
 
                 # When the shop is open, handle shop navigation
                 if shop_open:
+                    # Get current tab's ability list length
+                    tab_abs, tab_cur, tab_name, _, _, _, tab_unlock, tab_indices = (
+                        get_shop_tab_info(shop_tab)
+                    )
+                    tab_len = len(tab_abs)
+                    if event.key == pygame.K_LEFT:
+                        shop_tab = (shop_tab - 1) % 5
+                        shop_cursor = 0
+                    if event.key == pygame.K_RIGHT:
+                        shop_tab = (shop_tab + 1) % 5
+                        shop_cursor = 0
                     if event.key == pygame.K_UP:
-                        shop_cursor = (shop_cursor - 1) % len(ABILITIES)
+                        shop_cursor = (shop_cursor - 1) % tab_len
                     if event.key == pygame.K_DOWN:
-                        shop_cursor = (shop_cursor + 1) % len(ABILITIES)
+                        shop_cursor = (shop_cursor + 1) % tab_len
                     if event.key == pygame.K_RETURN:
                         # Try to buy the selected ability!
-                        cost = ABILITIES[shop_cursor][1]
-                        if (
-                            not ability_unlocked[shop_cursor]
-                            and chips_collected >= cost
-                        ):
-                            chips_collected -= cost
-                            ability_unlocked[shop_cursor] = True
+                        if shop_tab == 0:
+                            # Chip shop - original abilities
+                            cost = ABILITIES[shop_cursor][1]
+                            if (
+                                not ability_unlocked[shop_cursor]
+                                and chips_collected >= cost
+                            ):
+                                chips_collected -= cost
+                                ability_unlocked[shop_cursor] = True
+                        else:
+                            # Biome shop - use the right currency
+                            cost = tab_abs[shop_cursor][1]
+                            real_idx = tab_indices[shop_cursor]
+                            if not biome_ability_unlocked[real_idx] and tab_cur >= cost:
+                                # Deduct from the right currency
+                                if shop_tab == 1:
+                                    berries_collected -= cost
+                                elif shop_tab == 2:
+                                    gems_collected -= cost
+                                elif shop_tab == 3:
+                                    snowflakes_collected -= cost
+                                elif shop_tab == 4:
+                                    mushrooms_collected -= cost
+                                biome_ability_unlocked[real_idx] = True
                     # Skip all other game input when shop is open
                     continue
 
@@ -3326,17 +3594,23 @@ async def main():
                                 cdist = math.sqrt(cdx * cdx + cdy * cdy)
                                 if cdist < 30:  # close enough to grab!
                                     coll[3] = True  # mark as collected
-                                    chips_collected += 1
-                                    # Show a fun message!
-                                    item_names = {
-                                        "berry": "Found a berry! +1 chip",
-                                        "gem": "Found a gem! +1 chip",
-                                        "snowflake": "Caught a snowflake! +1 chip",
-                                        "glow_mushroom": "Picked a glowing mushroom! +1 chip",
-                                    }
-                                    collect_msg_text = item_names.get(
-                                        coll[2], "Found something! +1 chip"
-                                    )
+                                    # Each item adds to its own currency!
+                                    if coll[2] == "berry":
+                                        berries_collected += 1
+                                        collect_msg_text = "Found a berry! +1 berry"
+                                    elif coll[2] == "gem":
+                                        gems_collected += 1
+                                        collect_msg_text = "Found a gem! +1 gem"
+                                    elif coll[2] == "snowflake":
+                                        snowflakes_collected += 1
+                                        collect_msg_text = (
+                                            "Caught a snowflake! +1 snowflake"
+                                        )
+                                    elif coll[2] == "glow_mushroom":
+                                        mushrooms_collected += 1
+                                        collect_msg_text = (
+                                            "Picked a glowing mushroom! +1 mushroom"
+                                        )
                                     collect_msg_timer = 90  # show for 1.5 seconds
                                     break  # only pick up one at a time
                     else:
@@ -3493,6 +3767,197 @@ async def main():
                                 eq_dist = math.sqrt(eq_dx * eq_dx + eq_dy * eq_dy)
                                 if eq_dist < EARTHQUAKE_RADIUS:
                                     car.speed = 0.0  # cars stop
+
+                # === BIOME ABILITIES ===
+
+                # Press V for VINE TRAP! (Forest - index 0)
+                if event.key == pygame.K_v:
+                    if (
+                        biome_ability_unlocked[0]
+                        and vine_trap_timer <= 0
+                        and vine_trap_cooldown <= 0
+                    ):
+                        if inside_building is None:
+                            vine_trap_timer = VINE_TRAP_DURATION
+                            vine_trap_cooldown = 300  # 5 sec cooldown
+                            # Trap all NPCs in range!
+                            for npc in npcs:
+                                if npc.npc_type == "rock":
+                                    continue
+                                vd = math.sqrt(
+                                    (npc.x - burrb_x) ** 2 + (npc.y - burrb_y) ** 2
+                                )
+                                if vd < VINE_TRAP_RADIUS:
+                                    npc.speed = 0.0
+                                    npc.dir_timer = VINE_TRAP_DURATION
+
+                # Press C for CAMOUFLAGE! (Forest - index 1)
+                if event.key == pygame.K_c:
+                    if biome_ability_unlocked[1] and camouflage_timer <= 0:
+                        camouflage_timer = CAMOUFLAGE_DURATION
+
+                # Press H for NATURE HEAL! (Forest - index 2)
+                if event.key == pygame.K_h:
+                    if (
+                        biome_ability_unlocked[2]
+                        and nature_heal_timer <= 0
+                        and nature_heal_cooldown <= 0
+                    ):
+                        if inside_building is None:
+                            nature_heal_timer = 30  # brief push effect
+                            nature_heal_cooldown = 300
+                            # Push all nearby NPCs away hard!
+                            for npc in npcs:
+                                if npc.npc_type == "rock":
+                                    continue
+                                hd = math.sqrt(
+                                    (npc.x - burrb_x) ** 2 + (npc.y - burrb_y) ** 2
+                                )
+                                if hd < NATURE_HEAL_RADIUS and hd > 1:
+                                    push_str = 40
+                                    npc.x += ((npc.x - burrb_x) / hd) * push_str
+                                    npc.y += ((npc.y - burrb_y) / hd) * push_str
+
+                # Press N for SANDSTORM! (Desert - index 3)
+                if event.key == pygame.K_n:
+                    if (
+                        biome_ability_unlocked[3]
+                        and sandstorm_timer <= 0
+                        and sandstorm_cooldown <= 0
+                    ):
+                        if inside_building is None:
+                            sandstorm_timer = SANDSTORM_DURATION
+                            sandstorm_cooldown = 360
+                            # Slow + confuse all NPCs in range
+                            for npc in npcs:
+                                if npc.npc_type == "rock":
+                                    continue
+                                sd = math.sqrt(
+                                    (npc.x - burrb_x) ** 2 + (npc.y - burrb_y) ** 2
+                                )
+                                if sd < SANDSTORM_RADIUS:
+                                    npc.speed = 0.3
+                                    npc.dir_timer = SANDSTORM_DURATION
+
+                # Press M for MAGNET! (Desert - index 4)
+                if event.key == pygame.K_m:
+                    if (
+                        biome_ability_unlocked[4]
+                        and magnet_timer <= 0
+                        and magnet_cooldown <= 0
+                    ):
+                        magnet_timer = MAGNET_DURATION
+                        magnet_cooldown = 360
+
+                # Press R for FIRE DASH! (Desert - index 5)
+                if event.key == pygame.K_r:
+                    if (
+                        biome_ability_unlocked[5]
+                        and fire_dash_active <= 0
+                        and fire_dash_cooldown <= 0
+                    ):
+                        if inside_building is None:
+                            fire_dash_active = 20  # quick burst
+                            fire_dash_cooldown = 90
+
+                # Press L for ICE WALL! (Snow - index 6)
+                if event.key == pygame.K_l:
+                    if biome_ability_unlocked[6] and ice_wall_cooldown <= 0:
+                        if inside_building is None:
+                            ice_wall_cooldown = 180  # 3 sec cooldown
+                            # Place ice wall segments perpendicular to facing direction
+                            perp = burrb_angle + math.pi / 2
+                            wall_dist = 40  # how far in front
+                            cx = burrb_x + math.cos(burrb_angle) * wall_dist
+                            cy = burrb_y + math.sin(burrb_angle) * wall_dist
+                            for seg in range(-2, 3):
+                                wx = cx + math.cos(perp) * seg * 25
+                                wy = cy + math.sin(perp) * seg * 25
+                                ice_walls.append([wx, wy, 480])  # lasts 8 seconds
+
+                # Press Z for BLIZZARD! (Snow - index 7)
+                if event.key == pygame.K_z:
+                    if (
+                        biome_ability_unlocked[7]
+                        and blizzard_timer <= 0
+                        and blizzard_cooldown <= 0
+                    ):
+                        if inside_building is None:
+                            blizzard_timer = BLIZZARD_DURATION
+                            blizzard_cooldown = 360
+                            # Freeze AND push all NPCs in range
+                            for npc in npcs:
+                                if npc.npc_type == "rock":
+                                    continue
+                                bd = math.sqrt(
+                                    (npc.x - burrb_x) ** 2 + (npc.y - burrb_y) ** 2
+                                )
+                                if bd < BLIZZARD_RADIUS:
+                                    npc.speed = 0.0
+                                    npc.dir_timer = BLIZZARD_DURATION
+                                    if bd > 1:
+                                        npc.x += ((npc.x - burrb_x) / bd) * 25
+                                        npc.y += ((npc.y - burrb_y) / bd) * 25
+
+                # Press X for SNOW CLOAK! (Snow - index 8)
+                if event.key == pygame.K_x:
+                    if (
+                        biome_ability_unlocked[8]
+                        and snow_cloak_timer <= 0
+                        and snow_cloak_cooldown <= 0
+                    ):
+                        snow_cloak_timer = SNOW_CLOAK_DURATION
+                        snow_cloak_cooldown = 360
+
+                # Press P for POISON CLOUD! (Swamp - index 9)
+                if event.key == pygame.K_p:
+                    if biome_ability_unlocked[9] and poison_cooldown <= 0:
+                        if inside_building is None:
+                            poison_cooldown = 240
+                            poison_clouds.append(
+                                [burrb_x, burrb_y, POISON_CLOUD_DURATION]
+                            )
+
+                # Press J for SHADOW STEP! (Swamp - index 10)
+                if event.key == pygame.K_j:
+                    if biome_ability_unlocked[10] and shadow_step_cooldown <= 0:
+                        if inside_building is None:
+                            shadow_step_cooldown = 120  # 2 sec cooldown
+                            # Find nearest tree or dead_tree or building to teleport to
+                            best_dist = 999999
+                            best_x, best_y = burrb_x, burrb_y
+                            # Check biome objects (trees, dead trees, etc.)
+                            for ox, oy, okind, osize in biome_objects:
+                                if okind in ("dead_tree", "snow_tree", "cactus"):
+                                    sd = math.sqrt(
+                                        (ox - burrb_x) ** 2 + (oy - burrb_y) ** 2
+                                    )
+                                    if 50 < sd < 500 and sd < best_dist:
+                                        best_dist = sd
+                                        best_x = ox + 20
+                                        best_y = oy + 20
+                            for tx, ty, tsize in trees:
+                                sd = math.sqrt(
+                                    (tx - burrb_x) ** 2 + (ty - burrb_y) ** 2
+                                )
+                                if 50 < sd < 500 and sd < best_dist:
+                                    best_dist = sd
+                                    best_x = tx + 20
+                                    best_y = ty + 20
+                            if best_dist < 999999:
+                                burrb_x = best_x
+                                burrb_y = best_y
+                                teleport_flash = 15  # reuse the flash effect
+
+                # Press K for SWAMP MONSTER! (Swamp - index 11)
+                if event.key == pygame.K_k:
+                    if biome_ability_unlocked[11] and not swamp_monster_active:
+                        if inside_building is None:
+                            swamp_monster_active = True
+                            swamp_monster_x = burrb_x + 30
+                            swamp_monster_y = burrb_y + 30
+                            swamp_monster_timer = SWAMP_MONSTER_DURATION
+                            swamp_monster_walk = 0
 
             # === TOUCH / MOUSE INPUT ===
             # Handle finger touch events (phones/tablets) AND mouse clicks
@@ -3673,24 +4138,55 @@ async def main():
         # Handle touch input for the shop (tap abilities to select/buy)
         if shop_open and touch_active and touch_held:
             tx, ty = touch_pos
-            box_w = 500
-            box_h = 90 + len(ABILITIES) * 52 + 40
+            tab_abs, tab_cur, tab_name, _, _, _, tab_unlock, tab_indices = (
+                get_shop_tab_info(shop_tab)
+            )
+            num_items = len(tab_abs)
+            box_w = 520
+            box_h = 130 + num_items * 52 + 40
             box_x = (SCREEN_WIDTH - box_w) // 2
             box_y = (SCREEN_HEIGHT - box_h) // 2
-            # Check if tap is inside the shop box
-            if box_x <= tx <= box_x + box_w:
-                for i in range(len(ABILITIES)):
-                    row_y = box_y + 90 + i * 52
+            # Check if tap is on a tab
+            tab_w = box_w // 5
+            if box_y + 4 <= ty <= box_y + 32:
+                for ti in range(5):
+                    ttx = box_x + ti * tab_w
+                    if ttx <= tx <= ttx + tab_w:
+                        shop_tab = ti
+                        shop_cursor = 0
+                        touch_held = False
+                        break
+            # Check if tap is on an ability row
+            elif box_x <= tx <= box_x + box_w:
+                for i in range(num_items):
+                    row_y = box_y + 118 + i * 52
                     if row_y - 4 <= ty <= row_y + 48:
                         if shop_cursor == i:
                             # Already selected - try to buy!
-                            cost = ABILITIES[i][1]
-                            if not ability_unlocked[i] and chips_collected >= cost:
-                                chips_collected -= cost
-                                ability_unlocked[i] = True
+                            if shop_tab == 0:
+                                cost = ABILITIES[i][1]
+                                if not ability_unlocked[i] and chips_collected >= cost:
+                                    chips_collected -= cost
+                                    ability_unlocked[i] = True
+                            else:
+                                cost = tab_abs[i][1]
+                                real_idx = tab_indices[i]
+                                if (
+                                    not biome_ability_unlocked[real_idx]
+                                    and tab_cur >= cost
+                                ):
+                                    if shop_tab == 1:
+                                        berries_collected -= cost
+                                    elif shop_tab == 2:
+                                        gems_collected -= cost
+                                    elif shop_tab == 3:
+                                        snowflakes_collected -= cost
+                                    elif shop_tab == 4:
+                                        mushrooms_collected -= cost
+                                    biome_ability_unlocked[real_idx] = True
                         else:
                             shop_cursor = i
-                        touch_held = False  # prevent repeated taps
+                        touch_held = False
                         break
 
         # Skip movement and updates when shop is open (game is paused)
@@ -3760,6 +4256,160 @@ async def main():
         if earthquake_shake > 0:
             earthquake_shake -= 1
 
+        # --- BIOME ABILITY TIMERS ---
+        if vine_trap_timer > 0:
+            vine_trap_timer -= 1
+            # When vine trap ends, unstun NPCs
+            if vine_trap_timer <= 0:
+                for npc in npcs:
+                    if npc.npc_type != "rock" and npc.speed == 0.0:
+                        npc.speed = random.uniform(0.5, 1.5)
+                        npc.dir_timer = random.randint(30, 120)
+        if vine_trap_cooldown > 0:
+            vine_trap_cooldown -= 1
+        if camouflage_timer > 0:
+            camouflage_timer -= 1
+        if nature_heal_timer > 0:
+            nature_heal_timer -= 1
+        if nature_heal_cooldown > 0:
+            nature_heal_cooldown -= 1
+        if sandstorm_timer > 0:
+            sandstorm_timer -= 1
+            if sandstorm_timer <= 0:
+                for npc in npcs:
+                    if npc.npc_type != "rock" and npc.speed < 0.5:
+                        npc.speed = random.uniform(0.5, 1.5)
+                        npc.dir_timer = random.randint(30, 120)
+        if sandstorm_cooldown > 0:
+            sandstorm_cooldown -= 1
+        if magnet_timer > 0:
+            magnet_timer -= 1
+            # Pull uncollected items toward the burrb!
+            if inside_building is None:
+                for coll in biome_collectibles:
+                    if coll[3]:
+                        continue
+                    mdx = burrb_x - coll[0]
+                    mdy = burrb_y - coll[1]
+                    mdist = math.sqrt(mdx * mdx + mdy * mdy)
+                    if mdist < MAGNET_RADIUS and mdist > 5:
+                        pull_speed = 3.0
+                        coll[0] += (mdx / mdist) * pull_speed
+                        coll[1] += (mdy / mdist) * pull_speed
+        if magnet_cooldown > 0:
+            magnet_cooldown -= 1
+        if fire_dash_active > 0:
+            fire_dash_active -= 1
+            # Drop fire particles behind the burrb
+            if inside_building is None:
+                fire_trail.append([burrb_x, burrb_y, 60])  # lasts 1 second
+        if fire_dash_cooldown > 0:
+            fire_dash_cooldown -= 1
+        # Update fire trail
+        for ft in fire_trail:
+            ft[2] -= 1
+        fire_trail = [ft for ft in fire_trail if ft[2] > 0]
+        # Fire damages NPCs that walk through it!
+        for ft in fire_trail:
+            for npc in npcs:
+                if npc.npc_type == "rock":
+                    continue
+                fd = math.sqrt((npc.x - ft[0]) ** 2 + (npc.y - ft[1]) ** 2)
+                if fd < 15 and fd > 1:
+                    # Push NPC away from fire
+                    npc.x += ((npc.x - ft[0]) / fd) * 5
+                    npc.y += ((npc.y - ft[1]) / fd) * 5
+        # Update ice walls
+        for iw in ice_walls:
+            iw[2] -= 1
+        ice_walls = [iw for iw in ice_walls if iw[2] > 0]
+        if ice_wall_cooldown > 0:
+            ice_wall_cooldown -= 1
+        # Ice walls block NPCs
+        for iw in ice_walls:
+            for npc in npcs:
+                if npc.npc_type == "rock":
+                    continue
+                wd = math.sqrt((npc.x - iw[0]) ** 2 + (npc.y - iw[1]) ** 2)
+                if wd < 20 and wd > 1:
+                    # Push NPC away from wall
+                    npc.x += ((npc.x - iw[0]) / wd) * 3
+                    npc.y += ((npc.y - iw[1]) / wd) * 3
+        if blizzard_timer > 0:
+            blizzard_timer -= 1
+            if blizzard_timer <= 0:
+                for npc in npcs:
+                    if npc.npc_type != "rock" and npc.speed == 0.0:
+                        npc.speed = random.uniform(0.5, 1.5)
+                        npc.dir_timer = random.randint(30, 120)
+        if blizzard_cooldown > 0:
+            blizzard_cooldown -= 1
+        if snow_cloak_timer > 0:
+            snow_cloak_timer -= 1
+        if snow_cloak_cooldown > 0:
+            snow_cloak_cooldown -= 1
+        # Update poison clouds
+        for pc in poison_clouds:
+            pc[2] -= 1
+            # Push NPCs away from poison
+            for npc in npcs:
+                if npc.npc_type == "rock":
+                    continue
+                pd = math.sqrt((npc.x - pc[0]) ** 2 + (npc.y - pc[1]) ** 2)
+                if pd < POISON_CLOUD_RADIUS and pd > 1:
+                    npc.x += ((npc.x - pc[0]) / pd) * 2
+                    npc.y += ((npc.y - pc[1]) / pd) * 2
+        poison_clouds = [pc for pc in poison_clouds if pc[2] > 0]
+        if poison_cooldown > 0:
+            poison_cooldown -= 1
+        if shadow_step_cooldown > 0:
+            shadow_step_cooldown -= 1
+        # Swamp monster AI
+        if swamp_monster_active:
+            swamp_monster_timer -= 1
+            swamp_monster_walk += 1
+            if swamp_monster_timer <= 0:
+                swamp_monster_active = False
+            else:
+                # Find nearest NPC and chase it
+                nearest_npc = None
+                nearest_dist = SWAMP_MONSTER_RADIUS
+                for npc in npcs:
+                    if npc.npc_type == "rock":
+                        continue
+                    md = math.sqrt(
+                        (npc.x - swamp_monster_x) ** 2 + (npc.y - swamp_monster_y) ** 2
+                    )
+                    if md < nearest_dist:
+                        nearest_dist = md
+                        nearest_npc = npc
+                if nearest_npc is not None:
+                    md = nearest_dist
+                    if md > 1:
+                        swamp_monster_x += (
+                            (nearest_npc.x - swamp_monster_x) / md
+                        ) * SWAMP_MONSTER_SPEED
+                        swamp_monster_y += (
+                            (nearest_npc.y - swamp_monster_y) / md
+                        ) * SWAMP_MONSTER_SPEED
+                    # Push NPC away on contact
+                    if md < 20 and md > 1:
+                        nearest_npc.x += ((nearest_npc.x - swamp_monster_x) / md) * 8
+                        nearest_npc.y += ((nearest_npc.y - swamp_monster_y) / md) * 8
+                else:
+                    # No NPC nearby, follow the burrb
+                    fd = math.sqrt(
+                        (burrb_x - swamp_monster_x) ** 2
+                        + (burrb_y - swamp_monster_y) ** 2
+                    )
+                    if fd > 50 and fd > 1:
+                        swamp_monster_x += (
+                            (burrb_x - swamp_monster_x) / fd
+                        ) * SWAMP_MONSTER_SPEED
+                        swamp_monster_y += (
+                            (burrb_y - swamp_monster_y) / fd
+                        ) * SWAMP_MONSTER_SPEED
+
         # --- MOVEMENT ---
         # Check which keys are currently held down
         keys = pygame.key.get_pressed()
@@ -3786,6 +4436,12 @@ async def main():
                 dash_cooldown = 45
         if dash_active > 0:
             speed_mult = max(speed_mult, 4.0)  # dash is faster than super speed
+        # Fire Dash: even faster than regular dash with fire!
+        if fire_dash_active > 0:
+            speed_mult = max(speed_mult, 5.0)
+        # Snow Cloak: rolling snowball is fast!
+        if snow_cloak_timer > 0:
+            speed_mult = max(speed_mult, 3.0)
         # Giant mode makes you a little slower (you're big!)
         if giant_timer > 0:
             speed_mult *= 0.8
@@ -3898,7 +4554,7 @@ async def main():
         # BUT if we're invisible, they can't see us - they just wander confused!
         if inside_building is not None and inside_building.resident_angry:
             bld = inside_building
-            if invisible_timer > 0:
+            if invisible_timer > 0 or camouflage_timer > 0:
                 # Can't see us! Wander randomly
                 rand_angle = math.sin(bld.resident_walk_frame * 0.05) * 0.8
                 chase_dx = math.cos(rand_angle) * bld.resident_speed * 0.5
@@ -3916,6 +4572,7 @@ async def main():
             inside_building is not None
             and inside_building.resident_angry
             and invisible_timer <= 0
+            and camouflage_timer <= 0
         ):
             bld = inside_building
             # Move resident toward the player
@@ -4325,6 +4982,263 @@ async def main():
                     )
                     screen.blit(trail_surf, (trail_x - 8, trail_y - 8))
 
+            # --- BIOME ABILITY VISUAL EFFECTS ---
+
+            # Vine Trap: green vine circles around trapped NPCs
+            if vine_trap_timer > 0:
+                vt_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+                vt_alpha = min(150, vine_trap_timer * 3)
+                for npc in npcs:
+                    if npc.npc_type == "rock":
+                        continue
+                    if npc.speed == 0.0:
+                        nsx = int(npc.x - cam_x)
+                        nsy = int(npc.y - cam_y)
+                        if (
+                            -30 < nsx < SCREEN_WIDTH + 30
+                            and -30 < nsy < SCREEN_HEIGHT + 30
+                        ):
+                            pygame.draw.circle(
+                                vt_surf, (30, 180, 30, vt_alpha), (nsx, nsy), 14, 3
+                            )
+                            pygame.draw.circle(
+                                vt_surf, (60, 220, 60, vt_alpha // 2), (nsx, nsy), 18, 2
+                            )
+                screen.blit(vt_surf, (0, 0))
+
+            # Camouflage: green tint on the burrb (handled in burrb drawing)
+            # (We'll draw a leaf pattern overlay on the burrb area)
+            if camouflage_timer > 0:
+                camo_surf = pygame.Surface((30, 30), pygame.SRCALPHA)
+                camo_alpha = min(140, camouflage_timer * 3)
+                bsx = int(burrb_x - cam_x)
+                bsy = int(burrb_y - cam_y + bounce_y_offset)
+                t_val = pygame.time.get_ticks() * 0.003
+                for li in range(5):
+                    lx = 15 + int(math.sin(t_val + li * 1.2) * 8)
+                    ly = 15 + int(math.cos(t_val + li * 0.9) * 8)
+                    pygame.draw.circle(
+                        camo_surf, (40, 160, 40, camo_alpha), (lx, ly), 5
+                    )
+                screen.blit(camo_surf, (bsx - 15, bsy - 15))
+
+            # Nature Heal: expanding green ring
+            if nature_heal_timer > 0:
+                nh_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+                nh_r = int((30 - nature_heal_timer) * 10)
+                nh_alpha = int(180 * (nature_heal_timer / 30))
+                pygame.draw.circle(
+                    nh_surf,
+                    (80, 255, 80, nh_alpha),
+                    (int(burrb_x - cam_x), int(burrb_y - cam_y)),
+                    nh_r,
+                    4,
+                )
+                screen.blit(nh_surf, (0, 0))
+
+            # Sandstorm: swirling sand particles
+            if sandstorm_timer > 0:
+                ss_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+                ss_alpha = min(80, sandstorm_timer)
+                ss_surf.fill((220, 190, 120, ss_alpha // 3))
+                t_val = pygame.time.get_ticks() * 0.001
+                bsx = int(burrb_x - cam_x)
+                bsy = int(burrb_y - cam_y)
+                for si in range(20):
+                    sa = t_val * 3 + si * 0.3
+                    sr = 40 + si * 12
+                    sx_p = bsx + int(math.cos(sa) * sr)
+                    sy_p = bsy + int(math.sin(sa) * sr)
+                    pygame.draw.circle(
+                        ss_surf, (200, 170, 100, ss_alpha), (sx_p, sy_p), 3
+                    )
+                screen.blit(ss_surf, (0, 0))
+
+            # Magnet: blue pull lines toward burrb
+            if magnet_timer > 0:
+                mg_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+                mg_alpha = min(120, magnet_timer * 2)
+                bsx = int(burrb_x - cam_x)
+                bsy = int(burrb_y - cam_y)
+                for coll in biome_collectibles:
+                    if coll[3]:
+                        continue
+                    mdist = math.sqrt(
+                        (burrb_x - coll[0]) ** 2 + (burrb_y - coll[1]) ** 2
+                    )
+                    if mdist < MAGNET_RADIUS:
+                        cx = int(coll[0] - cam_x)
+                        cy = int(coll[1] - cam_y)
+                        pygame.draw.line(
+                            mg_surf, (100, 150, 255, mg_alpha), (bsx, bsy), (cx, cy), 1
+                        )
+                screen.blit(mg_surf, (0, 0))
+
+            # Fire trail: orange/red flames on the ground
+            for ft in fire_trail:
+                ftx = int(ft[0] - cam_x)
+                fty = int(ft[1] - cam_y)
+                if -20 < ftx < SCREEN_WIDTH + 20 and -20 < fty < SCREEN_HEIGHT + 20:
+                    ft_alpha = min(200, ft[2] * 5)
+                    ft_surf = pygame.Surface((20, 20), pygame.SRCALPHA)
+                    pygame.draw.circle(ft_surf, (255, 100, 20, ft_alpha), (10, 10), 8)
+                    pygame.draw.circle(
+                        ft_surf, (255, 200, 50, ft_alpha // 2), (10, 8), 5
+                    )
+                    screen.blit(ft_surf, (ftx - 10, fty - 10))
+
+            # Fire dash trail (on the burrb)
+            if fire_dash_active > 0:
+                bsx = int(burrb_x - cam_x)
+                bsy = int(burrb_y - cam_y)
+                for ti in range(3):
+                    to = (ti + 1) * 8
+                    ta = 160 - ti * 50
+                    tx_p = bsx - int(math.cos(burrb_angle) * to)
+                    ty_p = bsy - int(math.sin(burrb_angle) * to)
+                    t_surf = pygame.Surface((16, 16), pygame.SRCALPHA)
+                    pygame.draw.rect(
+                        t_surf, (255, 120, 30, ta), (0, 0, 16, 16), border_radius=4
+                    )
+                    screen.blit(t_surf, (tx_p - 8, ty_p - 8))
+
+            # Ice walls: blue-white blocks
+            for iw in ice_walls:
+                iwx = int(iw[0] - cam_x)
+                iwy = int(iw[1] - cam_y)
+                if -30 < iwx < SCREEN_WIDTH + 30 and -30 < iwy < SCREEN_HEIGHT + 30:
+                    iw_alpha = min(200, iw[2])
+                    iw_surf = pygame.Surface((22, 22), pygame.SRCALPHA)
+                    pygame.draw.rect(
+                        iw_surf,
+                        (150, 200, 255, iw_alpha),
+                        (0, 0, 22, 22),
+                        border_radius=4,
+                    )
+                    pygame.draw.rect(
+                        iw_surf,
+                        (200, 230, 255, iw_alpha),
+                        (3, 3, 16, 16),
+                        border_radius=3,
+                    )
+                    pygame.draw.rect(
+                        iw_surf,
+                        (100, 160, 220, iw_alpha),
+                        (0, 0, 22, 22),
+                        2,
+                        border_radius=4,
+                    )
+                    screen.blit(iw_surf, (iwx - 11, iwy - 11))
+
+            # Blizzard: swirling snow + blue overlay
+            if blizzard_timer > 0:
+                bz_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+                bz_alpha = min(60, blizzard_timer)
+                bz_surf.fill((180, 200, 255, bz_alpha // 3))
+                t_val = pygame.time.get_ticks() * 0.002
+                bsx = int(burrb_x - cam_x)
+                bsy = int(burrb_y - cam_y)
+                for si in range(15):
+                    sa = t_val * 4 + si * 0.4
+                    sr = 30 + si * 14
+                    sx_p = bsx + int(math.cos(sa) * sr)
+                    sy_p = bsy + int(math.sin(sa) * sr)
+                    pygame.draw.circle(
+                        bz_surf, (230, 240, 255, bz_alpha * 2), (sx_p, sy_p), 3
+                    )
+                screen.blit(bz_surf, (0, 0))
+
+            # Snow Cloak: draw a snowball instead of the burrb
+            # (The burrb drawing handles this by checking snow_cloak_timer)
+            if snow_cloak_timer > 0:
+                sc_surf = pygame.Surface((40, 40), pygame.SRCALPHA)
+                sc_roll = pygame.time.get_ticks() * 0.01
+                bsx = int(burrb_x - cam_x)
+                bsy = int(burrb_y - cam_y + bounce_y_offset)
+                pygame.draw.circle(screen, (230, 235, 245), (bsx, bsy), 12)
+                pygame.draw.circle(screen, (210, 220, 235), (bsx, bsy), 12, 2)
+                # Rolling detail lines
+                for ri in range(3):
+                    ra = sc_roll + ri * 2.1
+                    rx = bsx + int(math.cos(ra) * 6)
+                    ry = bsy + int(math.sin(ra) * 6)
+                    pygame.draw.circle(screen, (200, 210, 225), (rx, ry), 2)
+
+            # Poison clouds: green toxic clouds
+            for pc in poison_clouds:
+                pcx = int(pc[0] - cam_x)
+                pcy = int(pc[1] - cam_y)
+                if -80 < pcx < SCREEN_WIDTH + 80 and -80 < pcy < SCREEN_HEIGHT + 80:
+                    pc_alpha = min(120, pc[2] // 2)
+                    pc_surf = pygame.Surface(
+                        (POISON_CLOUD_RADIUS * 2 + 20, POISON_CLOUD_RADIUS * 2 + 20),
+                        pygame.SRCALPHA,
+                    )
+                    cx = POISON_CLOUD_RADIUS + 10
+                    cy = POISON_CLOUD_RADIUS + 10
+                    t_val = pygame.time.get_ticks() * 0.002
+                    # Multiple overlapping circles for cloud effect
+                    for ci in range(5):
+                        ca = t_val + ci * 1.3
+                        cr = POISON_CLOUD_RADIUS // 2 + int(math.sin(ca) * 10)
+                        cox = cx + int(math.cos(ca * 0.7) * 15)
+                        coy = cy + int(math.sin(ca * 0.5) * 15)
+                        pygame.draw.circle(
+                            pc_surf, (40, 180, 40, pc_alpha), (cox, coy), cr
+                        )
+                    screen.blit(
+                        pc_surf,
+                        (
+                            pcx - POISON_CLOUD_RADIUS - 10,
+                            pcy - POISON_CLOUD_RADIUS - 10,
+                        ),
+                    )
+
+            # Swamp Monster ally
+            if swamp_monster_active and inside_building is None:
+                smx = int(swamp_monster_x - cam_x)
+                smy = int(swamp_monster_y - cam_y)
+                if -40 < smx < SCREEN_WIDTH + 40 and -40 < smy < SCREEN_HEIGHT + 40:
+                    # Dark green body
+                    pygame.draw.ellipse(
+                        screen, (30, 100, 40), (smx - 12, smy - 8, 24, 16)
+                    )
+                    # Eyes (red and glowing)
+                    pygame.draw.circle(screen, (255, 50, 50), (smx - 5, smy - 6), 3)
+                    pygame.draw.circle(screen, (255, 50, 50), (smx + 5, smy - 6), 3)
+                    pygame.draw.circle(screen, (255, 150, 150), (smx - 5, smy - 6), 1)
+                    pygame.draw.circle(screen, (255, 150, 150), (smx + 5, smy - 6), 1)
+                    # 4 legs
+                    leg_off = math.sin(swamp_monster_walk * 0.3) * 3
+                    pygame.draw.line(
+                        screen,
+                        (20, 80, 30),
+                        (smx - 8, smy + 4),
+                        (smx - 12, smy + 10 + leg_off),
+                        2,
+                    )
+                    pygame.draw.line(
+                        screen,
+                        (20, 80, 30),
+                        (smx + 8, smy + 4),
+                        (smx + 12, smy + 10 - leg_off),
+                        2,
+                    )
+                    pygame.draw.line(
+                        screen,
+                        (20, 80, 30),
+                        (smx - 4, smy + 6),
+                        (smx - 6, smy + 12 - leg_off),
+                        2,
+                    )
+                    pygame.draw.line(
+                        screen,
+                        (20, 80, 30),
+                        (smx + 4, smy + 6),
+                        (smx + 6, smy + 12 + leg_off),
+                        2,
+                    )
+
             # Draw the tongue in top-down mode!
             if tongue_active and tongue_length > 0:
                 burrb_sx = burrb_x - cam_x
@@ -4415,26 +5329,27 @@ async def main():
         screen.blit(mode_shadow, (12, 42))
         screen.blit(mode_text, (10, 40))
 
-        # Chips collected counter!
-        if chips_collected > 0:
-            chip_str = f"Chips: {chips_collected}"
-            chip_text = font.render(chip_str, True, (255, 200, 50))
-            chip_shadow = font.render(chip_str, True, BLACK)
-            chip_x_pos = SCREEN_WIDTH - chip_text.get_width() - 12
-            screen.blit(chip_shadow, (chip_x_pos + 1, 12))
-            screen.blit(chip_text, (chip_x_pos, 10))
-            # Little chip bag icon next to the counter
-            icon_x = chip_x_pos - 16
-            pygame.draw.rect(
-                screen, (220, 160, 30), (icon_x, 8, 12, 16), border_radius=2
-            )
-            pygame.draw.rect(screen, (200, 40, 40), (icon_x, 14, 12, 5))
-            pygame.draw.rect(
-                screen, (150, 100, 20), (icon_x, 8, 12, 16), 1, border_radius=2
-            )
+        # Currency counters! Show all collected currencies in the top-right.
+        currency_y = 10
+        currencies_to_show = [
+            ("Chips", chips_collected, (255, 200, 50)),
+            ("Berries", berries_collected, (255, 100, 120)),
+            ("Gems", gems_collected, (100, 220, 255)),
+            ("Snowflakes", snowflakes_collected, (200, 220, 255)),
+            ("Mushrooms", mushrooms_collected, (100, 255, 150)),
+        ]
+        for cur_name, cur_count, cur_color in currencies_to_show:
+            if cur_count > 0:
+                cur_str = f"{cur_name}: {cur_count}"
+                cur_text = font.render(cur_str, True, cur_color)
+                cur_shadow = font.render(cur_str, True, BLACK)
+                cur_x = SCREEN_WIDTH - cur_text.get_width() - 12
+                screen.blit(cur_shadow, (cur_x + 1, currency_y + 1))
+                screen.blit(cur_text, (cur_x, currency_y))
+                currency_y += 18
 
-        # Active ability indicators (shown on the right side below chip counter)
-        ability_y = 34
+        # Active ability indicators (shown on the right side below currencies)
+        ability_y = currency_y + 4
         # Show active timed abilities with remaining time bars
         active_abilities = []
         if freeze_timer > 0:
@@ -4455,6 +5370,37 @@ async def main():
             active_abilities.append(
                 ("QUAKE!", (200, 150, 50), earthquake_timer, EARTHQUAKE_DURATION)
             )
+        # Biome ability timers
+        if vine_trap_timer > 0:
+            active_abilities.append(
+                ("VINES", (30, 200, 30), vine_trap_timer, VINE_TRAP_DURATION)
+            )
+        if camouflage_timer > 0:
+            active_abilities.append(
+                ("CAMO", (40, 160, 40), camouflage_timer, CAMOUFLAGE_DURATION)
+            )
+        if sandstorm_timer > 0:
+            active_abilities.append(
+                ("STORM", (220, 190, 120), sandstorm_timer, SANDSTORM_DURATION)
+            )
+        if magnet_timer > 0:
+            active_abilities.append(
+                ("MAGNET", (100, 150, 255), magnet_timer, MAGNET_DURATION)
+            )
+        if fire_dash_active > 0:
+            active_abilities.append(("FIRE!", (255, 120, 30), fire_dash_active, 20))
+        if blizzard_timer > 0:
+            active_abilities.append(
+                ("BLIZZARD", (180, 200, 255), blizzard_timer, BLIZZARD_DURATION)
+            )
+        if snow_cloak_timer > 0:
+            active_abilities.append(
+                ("SNOWBALL", (230, 235, 245), snow_cloak_timer, SNOW_CLOAK_DURATION)
+            )
+        if swamp_monster_active:
+            active_abilities.append(
+                ("MONSTER", (30, 100, 40), swamp_monster_timer, SWAMP_MONSTER_DURATION)
+            )
         # Show always-on abilities as small badges
         passive_badges = []
         if ability_unlocked[1]:  # Super Speed
@@ -4465,6 +5411,8 @@ async def main():
             ability_unlocked[0] and not ability_unlocked[1]
         ):  # Dash (only if no super speed)
             passive_badges.append(("DSH", (255, 255, 100)))
+        if biome_ability_unlocked[4]:  # Magnet (passive-ish, press to use)
+            passive_badges.append(("MAG", (100, 150, 255)))
 
         for ab_name, ab_color, ab_timer, ab_max in active_abilities:
             # Background bar
