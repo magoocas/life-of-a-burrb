@@ -625,32 +625,32 @@ for _ in range(30):
 # Scatter special collectible items throughout each biome!
 # Each one is a list (not tuple) so we can mark it as collected.
 
-# Forest: Berries (30 scattered around)
-for _ in range(30):
+# Forest: Berries (12 scattered around - rare!)
+for _ in range(12):
     fx = random.randint(200, WORLD_WIDTH // 2 - 200)
     fy = random.randint(200, WORLD_HEIGHT // 2 - 200)
     if CITY_X1 - 50 < fx < CITY_X2 + 50 and CITY_Y1 - 50 < fy < CITY_Y2 + 50:
         continue
     biome_collectibles.append([fx, fy, "berry", False])
 
-# Snow: Snowflakes (30 scattered around)
-for _ in range(30):
+# Snow: Snowflakes (12 scattered around - rare!)
+for _ in range(12):
     sx = random.randint(WORLD_WIDTH // 2 + 200, WORLD_WIDTH - 200)
     sy = random.randint(200, WORLD_HEIGHT // 2 - 200)
     if CITY_X1 - 50 < sx < CITY_X2 + 50 and CITY_Y1 - 50 < sy < CITY_Y2 + 50:
         continue
     biome_collectibles.append([sx, sy, "snowflake", False])
 
-# Swamp: Glowing Mushrooms (30 scattered around)
-for _ in range(30):
+# Swamp: Glowing Mushrooms (12 scattered around - rare!)
+for _ in range(12):
     wx = random.randint(200, WORLD_WIDTH // 2 - 200)
     wy = random.randint(WORLD_HEIGHT // 2 + 200, WORLD_HEIGHT - 200)
     if CITY_X1 - 50 < wx < CITY_X2 + 50 and CITY_Y1 - 50 < wy < CITY_Y2 + 50:
         continue
     biome_collectibles.append([wx, wy, "glow_mushroom", False])
 
-# Desert: Gems (30 scattered around)
-for _ in range(30):
+# Desert: Gems (12 scattered around - rare!)
+for _ in range(12):
     dx = random.randint(WORLD_WIDTH // 2 + 200, WORLD_WIDTH - 200)
     dy = random.randint(WORLD_HEIGHT // 2 + 200, WORLD_HEIGHT - 200)
     if CITY_X1 - 50 < dx < CITY_X2 + 50 and CITY_Y1 - 50 < dy < CITY_Y2 + 50:
