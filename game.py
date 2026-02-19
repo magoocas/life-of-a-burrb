@@ -522,6 +522,16 @@ for _ in range(5):
 # "kind" tells the drawing code what to draw.
 biome_objects = []  # list of (x, y, kind, size)
 
+# BIOME COLLECTIBLES - special items to find in each biome!
+# City has potato chips (inside buildings). The other biomes have their
+# own special items scattered around the open world:
+#   Forest  = Berries   (juicy red/purple berries)
+#   Desert  = Gems      (shiny crystals poking out of the sand)
+#   Snow    = Snowflakes (sparkly magical snowflakes)
+#   Swamp   = Mushrooms  (glowing green mushrooms)
+# Collecting any of these gives you chips to spend in the shop!
+biome_collectibles = []  # list of [x, y, kind, collected]
+
 # --- FOREST biome (top-left): lots of big trees, mushrooms, flowers ---
 for _ in range(300):
     fx = random.randint(100, WORLD_WIDTH // 2 - 100)
@@ -610,6 +620,42 @@ for _ in range(30):
     if CITY_X1 - 50 < dx < CITY_X2 + 50 and CITY_Y1 - 50 < dy < CITY_Y2 + 50:
         continue
     biome_objects.append((dx, dy, "tumbleweed", random.randint(6, 12)))
+
+# --- BIOME COLLECTIBLES ---
+# Scatter special collectible items throughout each biome!
+# Each one is a list (not tuple) so we can mark it as collected.
+
+# Forest: Berries (30 scattered around)
+for _ in range(30):
+    fx = random.randint(200, WORLD_WIDTH // 2 - 200)
+    fy = random.randint(200, WORLD_HEIGHT // 2 - 200)
+    if CITY_X1 - 50 < fx < CITY_X2 + 50 and CITY_Y1 - 50 < fy < CITY_Y2 + 50:
+        continue
+    biome_collectibles.append([fx, fy, "berry", False])
+
+# Snow: Snowflakes (30 scattered around)
+for _ in range(30):
+    sx = random.randint(WORLD_WIDTH // 2 + 200, WORLD_WIDTH - 200)
+    sy = random.randint(200, WORLD_HEIGHT // 2 - 200)
+    if CITY_X1 - 50 < sx < CITY_X2 + 50 and CITY_Y1 - 50 < sy < CITY_Y2 + 50:
+        continue
+    biome_collectibles.append([sx, sy, "snowflake", False])
+
+# Swamp: Glowing Mushrooms (30 scattered around)
+for _ in range(30):
+    wx = random.randint(200, WORLD_WIDTH // 2 - 200)
+    wy = random.randint(WORLD_HEIGHT // 2 + 200, WORLD_HEIGHT - 200)
+    if CITY_X1 - 50 < wx < CITY_X2 + 50 and CITY_Y1 - 50 < wy < CITY_Y2 + 50:
+        continue
+    biome_collectibles.append([wx, wy, "glow_mushroom", False])
+
+# Desert: Gems (30 scattered around)
+for _ in range(30):
+    dx = random.randint(WORLD_WIDTH // 2 + 200, WORLD_WIDTH - 200)
+    dy = random.randint(WORLD_HEIGHT // 2 + 200, WORLD_HEIGHT - 200)
+    if CITY_X1 - 50 < dx < CITY_X2 + 50 and CITY_Y1 - 50 < dy < CITY_Y2 + 50:
+        continue
+    biome_collectibles.append([dx, dy, "gem", False])
 
 
 # ============================================================
@@ -1115,6 +1161,100 @@ def draw_biome_object(surface, x, y, kind, size, cam_x, cam_y):
             x2 = sx + int(math.cos(a + 2) * size * 0.3)
             y2 = sy + int(math.sin(a + 2) * size * 0.3)
             pygame.draw.line(surface, (120, 90, 50), (x1, y1), (x2, y2), 1)
+
+
+def draw_biome_collectible(surface, x, y, kind, cam_x, cam_y):
+    """Draw a collectible biome item with a little bobbing animation."""
+    sx = int(x - cam_x)
+    sy = int(y - cam_y)
+    # Skip if off-screen
+    if sx < -40 or sx > SCREEN_WIDTH + 40 or sy < -40 or sy > SCREEN_HEIGHT + 40:
+        return
+    # Use game ticks for animation (smooth and consistent)
+    t = pygame.time.get_ticks() * 0.001  # seconds as float
+    # Little floating bob animation (goes up and down gently)
+    bob = int(math.sin(t * 3.5 + x * 0.01) * 3)
+    sy += bob
+
+    if kind == "berry":
+        # A cluster of juicy red and purple berries on a tiny branch!
+        # Little branch
+        pygame.draw.line(surface, (100, 70, 30), (sx, sy + 4), (sx, sy - 2), 2)
+        # Berries - cluster of 3 circles
+        pygame.draw.circle(surface, (180, 30, 50), (sx - 4, sy - 2), 5)
+        pygame.draw.circle(surface, (140, 20, 80), (sx + 4, sy - 2), 5)
+        pygame.draw.circle(surface, (200, 40, 40), (sx, sy - 6), 5)
+        # Little shine spots on each berry
+        pygame.draw.circle(surface, (255, 150, 150), (sx - 3, sy - 4), 2)
+        pygame.draw.circle(surface, (200, 130, 200), (sx + 5, sy - 4), 2)
+        pygame.draw.circle(surface, (255, 140, 140), (sx + 1, sy - 8), 2)
+        # Sparkle effect!
+        sparkle = int(math.sin(t * 6 + x) * 2)
+        pygame.draw.circle(surface, (255, 255, 200), (sx - 6, sy - 8 + sparkle), 1)
+
+    elif kind == "gem":
+        # A shiny crystal poking out of the sand!
+        # Crystal shape - diamond/gem with facets
+        gem_pts = [
+            (sx, sy - 12),  # top point
+            (sx - 7, sy - 4),  # left
+            (sx - 4, sy + 4),  # bottom-left
+            (sx + 4, sy + 4),  # bottom-right
+            (sx + 7, sy - 4),  # right
+        ]
+        # Main gem body (cyan/teal)
+        pygame.draw.polygon(surface, (50, 200, 220), gem_pts)
+        # Lighter facet on the left
+        pygame.draw.polygon(
+            surface, (100, 230, 245), [(sx, sy - 12), (sx - 7, sy - 4), (sx, sy)]
+        )
+        # Outline
+        pygame.draw.polygon(surface, (30, 150, 170), gem_pts, 2)
+        # Sparkle at the top!
+        sparkle = abs(int(math.sin(t * 7 + x * 0.1) * 3))
+        pygame.draw.circle(surface, (255, 255, 255), (sx, sy - 12 - sparkle), 2)
+        pygame.draw.circle(surface, (200, 240, 255), (sx + 3, sy - 10), 1)
+
+    elif kind == "snowflake":
+        # A sparkly magical snowflake floating just above the ground!
+        r = 8
+        # Draw 6 branches of the snowflake
+        for i in range(6):
+            angle = i * (math.pi / 3) + t * 1.2  # slowly rotates!
+            ex = sx + int(math.cos(angle) * r)
+            ey = sy + int(math.sin(angle) * r)
+            pygame.draw.line(surface, (200, 220, 255), (sx, sy), (ex, ey), 2)
+            # Little branch tips
+            for side in [-0.4, 0.4]:
+                bx = sx + int(math.cos(angle) * r * 0.6)
+                by = sy + int(math.sin(angle) * r * 0.6)
+                tx = bx + int(math.cos(angle + side) * 4)
+                ty = by + int(math.sin(angle + side) * 4)
+                pygame.draw.line(surface, (180, 200, 255), (bx, by), (tx, ty), 1)
+        # Center dot
+        pygame.draw.circle(surface, (240, 245, 255), (sx, sy), 3)
+        # Sparkle!
+        sparkle = abs(int(math.sin(t * 9 + x * 0.05) * 4))
+        pygame.draw.circle(surface, (255, 255, 255), (sx - 5, sy - 5 - sparkle), 1)
+        pygame.draw.circle(surface, (255, 255, 255), (sx + 6, sy + 3 + sparkle), 1)
+
+    elif kind == "glow_mushroom":
+        # A glowing green/teal mushroom with a soft light around it!
+        # Glow effect (translucent circle behind the mushroom)
+        glow_surf = pygame.Surface((40, 40), pygame.SRCALPHA)
+        glow_pulse = 80 + int(math.sin(t * 5 + y * 0.01) * 30)
+        pygame.draw.circle(glow_surf, (50, 255, 120, glow_pulse), (20, 20), 16)
+        surface.blit(glow_surf, (sx - 20, sy - 20))
+        # Stem
+        pygame.draw.rect(surface, (180, 200, 160), (sx - 2, sy, 4, 8))
+        # Cap (rounded top)
+        pygame.draw.ellipse(surface, (30, 200, 100), (sx - 8, sy - 6, 16, 10))
+        # Lighter spots on cap
+        pygame.draw.circle(surface, (80, 255, 150), (sx - 3, sy - 3), 2)
+        pygame.draw.circle(surface, (80, 255, 150), (sx + 4, sy - 2), 2)
+        # Sparkle
+        sparkle = abs(int(math.sin(t * 6 + y) * 3))
+        pygame.draw.circle(surface, (150, 255, 200), (sx, sy - 10 - sparkle), 1)
 
 
 def draw_biome_ground(surface, cam_x, cam_y):
@@ -2741,6 +2881,8 @@ jumpscare_frame = 0  # animation frame counter for the scare
 JUMPSCARE_DURATION = 150  # 2.5 seconds at 60fps - longer = scarier!
 scare_level = 0  # goes up each time you get jump scared - each one gets WORSE
 closet_msg_timer = 0  # frames to show "found chips!" message
+collect_msg_timer = 0  # frames to show "collected!" message for biome items
+collect_msg_text = ""  # what text to show when you pick something up
 
 # ============================================================
 # ABILITIES!
@@ -3068,6 +3210,7 @@ async def main():
     global teleport_cooldown, teleport_flash
     global earthquake_timer, earthquake_cooldown, earthquake_shake
     global jumpscare_timer, jumpscare_frame, closet_msg_timer, scare_level
+    global collect_msg_timer, collect_msg_text
     global cam_x, cam_y
     global touch_active, touch_move_target, touch_held
     global touch_pos, touch_start_pos, touch_finger_id, touch_btn_pressed
@@ -3173,6 +3316,29 @@ async def main():
                             interior_y = float(nearby.spawn_y)
                             burrb_angle = math.pi * 1.5  # face upward (into the room)
                             touch_move_target = None  # clear touch target
+                        else:
+                            # Try to pick up a biome collectible!
+                            for coll in biome_collectibles:
+                                if coll[3]:  # already collected
+                                    continue
+                                cdx = burrb_x - coll[0]
+                                cdy = burrb_y - coll[1]
+                                cdist = math.sqrt(cdx * cdx + cdy * cdy)
+                                if cdist < 30:  # close enough to grab!
+                                    coll[3] = True  # mark as collected
+                                    chips_collected += 1
+                                    # Show a fun message!
+                                    item_names = {
+                                        "berry": "Found a berry! +1 chip",
+                                        "gem": "Found a gem! +1 chip",
+                                        "snowflake": "Caught a snowflake! +1 chip",
+                                        "glow_mushroom": "Picked a glowing mushroom! +1 chip",
+                                    }
+                                    collect_msg_text = item_names.get(
+                                        coll[2], "Found something! +1 chip"
+                                    )
+                                    collect_msg_timer = 90  # show for 1.5 seconds
+                                    break  # only pick up one at a time
                     else:
                         # Try to open the closet!
                         bld = inside_building
@@ -3554,6 +3720,8 @@ async def main():
             jumpscare_frame += 1
         if closet_msg_timer > 0:
             closet_msg_timer -= 1
+        if collect_msg_timer > 0:
+            collect_msg_timer -= 1
         # Smoothly grow/shrink for giant mode
         target_giant = 2.5 if giant_timer > 0 else 1.0
         giant_scale += (target_giant - giant_scale) * 0.15
@@ -3979,6 +4147,13 @@ async def main():
                 if oy < burrb_y:
                     draw_biome_object(screen, ox, oy, okind, osize, cam_x, cam_y)
 
+            # Draw biome collectibles behind the burrb (not yet collected)
+            for coll in biome_collectibles:
+                if not coll[3] and coll[1] < burrb_y:
+                    draw_biome_collectible(
+                        screen, coll[0], coll[1], coll[2], cam_x, cam_y
+                    )
+
             # Draw parks (in the city)
             for park in parks:
                 pr = pygame.Rect(park.x - cam_x, park.y - cam_y, park.w, park.h)
@@ -4197,6 +4372,13 @@ async def main():
                 if oy >= burrb_y:
                     draw_biome_object(screen, ox, oy, okind, osize, cam_x, cam_y)
 
+            # Draw biome collectibles in front of the burrb
+            for coll in biome_collectibles:
+                if not coll[3] and coll[1] >= burrb_y:
+                    draw_biome_collectible(
+                        screen, coll[0], coll[1], coll[2], cam_x, cam_y
+                    )
+
             # Show which biome we're in
             cur_biome = get_biome(burrb_x, burrb_y)
             biome_names = {
@@ -4327,6 +4509,50 @@ async def main():
                 px_pos = SCREEN_WIDTH // 2 - prompt.get_width() // 2
                 screen.blit(prompt_shadow, (px_pos + 1, SCREEN_HEIGHT // 2 + 101))
                 screen.blit(prompt, (px_pos, SCREEN_HEIGHT // 2 + 100))
+            else:
+                # Check if near a biome collectible - show pickup prompt!
+                for coll in biome_collectibles:
+                    if coll[3]:  # already collected
+                        continue
+                    cdx = burrb_x - coll[0]
+                    cdy = burrb_y - coll[1]
+                    cdist = math.sqrt(cdx * cdx + cdy * cdy)
+                    if cdist < 30:
+                        # Show the right prompt color for each item type
+                        prompt_colors = {
+                            "berry": (255, 100, 100),
+                            "gem": (100, 220, 255),
+                            "snowflake": (200, 220, 255),
+                            "glow_mushroom": (100, 255, 150),
+                        }
+                        prompt_names = {
+                            "berry": "Press E to pick berries!",
+                            "gem": "Press E to grab gem!",
+                            "snowflake": "Press E to catch snowflake!",
+                            "glow_mushroom": "Press E to pick mushroom!",
+                        }
+                        pc = prompt_colors.get(coll[2], YELLOW)
+                        pt = prompt_names.get(coll[2], "Press E to collect!")
+                        prompt = font.render(pt, True, pc)
+                        prompt_shadow = font.render(pt, True, BLACK)
+                        px_pos = SCREEN_WIDTH // 2 - prompt.get_width() // 2
+                        screen.blit(
+                            prompt_shadow, (px_pos + 1, SCREEN_HEIGHT // 2 + 101)
+                        )
+                        screen.blit(prompt, (px_pos, SCREEN_HEIGHT // 2 + 100))
+                        break
+
+        # "Collected!" message when you pick up a biome item
+        if collect_msg_timer > 0:
+            msg_alpha = min(255, collect_msg_timer * 6)  # fades out
+            msg_color = (100, 255, 100)
+            msg = font.render(collect_msg_text, True, msg_color)
+            msg_shadow = font.render(collect_msg_text, True, BLACK)
+            mx = SCREEN_WIDTH // 2 - msg.get_width() // 2
+            # Float upward as it fades
+            my = SCREEN_HEIGHT // 2 + 70 - (90 - collect_msg_timer) // 3
+            screen.blit(msg_shadow, (mx + 1, my + 1))
+            screen.blit(msg, (mx, my))
 
         # Draw touch buttons (only if touch has been used)
         if touch_active:
