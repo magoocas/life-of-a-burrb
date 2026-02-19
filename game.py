@@ -2732,7 +2732,7 @@ tongue_hit_npc = None  # did we hit someone? (for visual feedback)
 
 # Chip collecting!
 # Every building has a bag of chips. Steal them all!
-chips_collected = 0
+chips_collected = 2
 
 # Jump scare from closets!
 # When you open a closet and get unlucky, a scary birb jumps out!
