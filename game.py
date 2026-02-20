@@ -703,16 +703,22 @@ class NPC:
         self.chase_speed = random.uniform(2.0, 3.0)  # faster when chasing!
         self.chasing = False  # currently chasing the player?
         self.attack_cooldown = 0  # frames until they can hit you again
+        # NPC health! Tongue hits hurt them instead of turning them to stone.
+        self.hp = 3  # takes 3 tongue hits to knock out
+        self.hurt_flash = 0  # frames of red flash when hit
+        self.alive = True  # set to False when HP hits 0
 
     def update(self, player_x=0.0, player_y=0.0):
         """Move the NPC around. This is its simple 'brain'."""
-        # Rocks don't move! They just sit there being a rock.
-        if self.npc_type == "rock":
+        # Dead NPCs and rocks don't move!
+        if not self.alive or self.npc_type == "rock":
             return
 
         self.walk_frame += 1
         if self.attack_cooldown > 0:
             self.attack_cooldown -= 1
+        if self.hurt_flash > 0:
+            self.hurt_flash -= 1
 
         # --- AGGRESSIVE CHASE BEHAVIOR ---
         # If this burrb is mean and the player is close enough,
@@ -1546,6 +1552,10 @@ def draw_npc_topdown(surface, npc, cam_x, cam_y):
     - Cats are small ovals with pointy ears
     - Dogs are ovals with a tail
     """
+    # Don't draw dead NPCs!
+    if not npc.alive:
+        return
+
     sx = int(npc.x - cam_x)
     sy = int(npc.y - cam_y)
     # Don't draw if off screen
@@ -1631,6 +1641,37 @@ def draw_npc_topdown(surface, npc, cam_x, cam_y):
             alert_font = pygame.font.Font(None, 20)
             alert_text = alert_font.render("!", True, (255, 50, 50))
             surface.blit(alert_text, (sx - 3, sy - size // 2 - 16))
+
+        # Hurt flash! NPC flashes red when hit by the tongue.
+        if npc.hurt_flash > 0:
+            flash_surf = pygame.Surface((size + 4, size + 4), pygame.SRCALPHA)
+            flash_alpha = int(180 * (npc.hurt_flash / 15.0))
+            pygame.draw.rect(
+                flash_surf,
+                (255, 50, 50, flash_alpha),
+                (0, 0, size + 4, size + 4),
+                border_radius=3,
+            )
+            surface.blit(flash_surf, (sx - size // 2 - 2, sy - size // 2 - 2))
+
+        # Health bar above NPC (only for aggressive burrbs, only when hurt)
+        if npc.aggressive and npc.hp < 3:
+            bar_w = 20
+            bar_h = 3
+            bar_x = sx - bar_w // 2
+            bar_y = sy - size // 2 - 20
+            # Background (dark)
+            pygame.draw.rect(surface, (40, 0, 0), (bar_x, bar_y, bar_w, bar_h))
+            # Health fill (red to green based on HP)
+            fill_w = int(bar_w * (npc.hp / 3.0))
+            if npc.hp >= 2:
+                bar_color = (80, 200, 80)
+            elif npc.hp >= 1:
+                bar_color = (220, 180, 40)
+            else:
+                bar_color = (220, 40, 40)
+            if fill_w > 0:
+                pygame.draw.rect(surface, bar_color, (bar_x, bar_y, fill_w, bar_h))
 
     elif npc.npc_type == "human":
         # Head (circle)
@@ -2996,7 +3037,7 @@ cam_y = 0.0
 
 # Tongue ability!
 # The burrb can extend its tongue by pressing O. When the tongue
-# hits an NPC, that NPC turns into a rock! Like a magic petrifying tongue.
+# hits an NPC, it hurts them! Hit them 3 times to knock them out.
 tongue_active = False  # is the tongue currently shooting out?
 tongue_length = 0.0  # how far the tongue has extended so far
 tongue_max_length = 120.0  # max reach of the tongue
@@ -4798,7 +4839,7 @@ async def main():
 
         if inside_building is None and death_timer <= 0:
             for npc in npcs:
-                if not npc.aggressive or npc.npc_type == "rock":
+                if not npc.aggressive or npc.npc_type == "rock" or not npc.alive:
                     continue
                 if npc.attack_cooldown > 0:
                     continue
@@ -4844,7 +4885,8 @@ async def main():
 
         # --- UPDATE TONGUE ---
         # The tongue extends outward, checks if it hits any NPC,
-        # then retracts back. If it hits an NPC, that NPC turns to stone!
+        # then retracts back. If it hits an NPC, it hurts them!
+        # Hit them 3 times to knock them out.
         # Mega Tongue ability doubles the range!
         effective_tongue_max = tongue_max_length * (2.0 if ability_unlocked[2] else 1.0)
         if tongue_active:
@@ -4859,19 +4901,26 @@ async def main():
                 tip_x = burrb_x + math.cos(tongue_angle) * tongue_length
                 tip_y = burrb_y + math.sin(tongue_angle) * tongue_length
                 for npc in npcs:
-                    if npc.npc_type == "rock":
-                        continue  # already a rock, skip
+                    if npc.npc_type == "rock" or not npc.alive:
+                        continue  # skip rocks and dead NPCs
                     ddx = npc.x - tip_x
                     ddy = npc.y - tip_y
                     hit_dist = math.sqrt(ddx * ddx + ddy * ddy)
                     if hit_dist < 16:  # close enough = hit!
-                        # PETRIFY! Turn this NPC into a rock!
-                        npc.npc_type = "rock"
-                        npc.color = (120, 120, 110)  # gray rock color
-                        npc.detail_color = (90, 90, 80)  # darker gray
-                        npc.speed = 0  # rocks don't move
+                        # OUCH! Hurt the NPC!
+                        npc.hp -= 1
+                        npc.hurt_flash = 15  # red flash
                         tongue_hit_npc = npc
                         tongue_retracting = True  # tongue snaps back
+                        # Knock them back away from the player!
+                        if hit_dist > 1:
+                            npc.x += (ddx / hit_dist) * 20
+                            npc.y += (ddy / hit_dist) * 20
+                            npc.x = max(30, min(WORLD_WIDTH - 30, npc.x))
+                            npc.y = max(30, min(WORLD_HEIGHT - 30, npc.y))
+                        if npc.hp <= 0:
+                            # Knocked out! They disappear.
+                            npc.alive = False
                         break
             else:
                 # Tongue is retracting
