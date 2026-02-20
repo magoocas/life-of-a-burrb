@@ -57,6 +57,15 @@ BLOCK_SIZE = 200  # each city block is 200x200 pixels (smaller = denser city)
 ROAD_WIDTH = 70  # wider roads for more cement
 SIDEWALK_WIDTH = 24  # wider sidewalks
 
+# Spawn square - the burrb starts here, and nothing spawns inside it!
+# It's a safe clearing in the middle of the city so you have room to look around.
+SPAWN_X = WORLD_WIDTH // 2
+SPAWN_Y = WORLD_HEIGHT // 2
+SPAWN_SIZE = 200  # 200x200 pixel square
+SPAWN_RECT = pygame.Rect(
+    SPAWN_X - SPAWN_SIZE // 2, SPAWN_Y - SPAWN_SIZE // 2, SPAWN_SIZE, SPAWN_SIZE
+)
+
 # ============================================================
 # BIOMES - different areas of the world!
 # ============================================================
@@ -901,6 +910,50 @@ for bx in range(CITY_X1, CITY_X2, step):
             cx = road_x - ROAD_WIDTH // 4  # left side
         color, detail, ctype = random.choice(car_colors)
         cars.append(Car(cx, cy, direction, color, detail, ctype))
+
+
+# ============================================================
+# SPAWN SQUARE CLEANUP
+# ============================================================
+# Remove ALL objects from the spawn square so the player starts
+# in a nice clear area with nothing in the way!
+# A little padding so things don't sit right on the edge.
+_sp = 10  # padding
+_spawn_padded = pygame.Rect(
+    SPAWN_RECT.x - _sp,
+    SPAWN_RECT.y - _sp,
+    SPAWN_RECT.w + _sp * 2,
+    SPAWN_RECT.h + _sp * 2,
+)
+
+# Remove buildings
+buildings = [b for b in buildings if not _spawn_padded.colliderect(b.get_rect())]
+
+# Remove trees
+trees = [
+    (tx, ty, ts) for (tx, ty, ts) in trees if not _spawn_padded.collidepoint(tx, ty)
+]
+
+# Remove biome objects (decorations)
+biome_objects = [
+    (ox, oy, ok, os)
+    for (ox, oy, ok, os) in biome_objects
+    if not _spawn_padded.collidepoint(ox, oy)
+]
+
+# Remove biome collectibles
+biome_collectibles = [
+    c for c in biome_collectibles if not _spawn_padded.collidepoint(c[0], c[1])
+]
+
+# Remove NPCs
+npcs = [n for n in npcs if not _spawn_padded.collidepoint(n.x, n.y)]
+
+# Remove cars
+cars = [c for c in cars if not _spawn_padded.collidepoint(c.x, c.y)]
+
+# Remove parks that overlap
+parks = [p for p in parks if not _spawn_padded.colliderect(p)]
 
 
 # ============================================================
@@ -4798,6 +4851,42 @@ async def main():
             # ========== TOP-DOWN MODE (the original view) ==========
             # Fill the background with biome colors
             draw_biome_ground(screen, cam_x, cam_y)
+
+            # Draw the spawn square (a nice clear area where you start!)
+            sp_sx = SPAWN_RECT.x - cam_x
+            sp_sy = SPAWN_RECT.y - cam_y
+            # Only draw if on screen
+            if (
+                sp_sx + SPAWN_SIZE > 0
+                and sp_sx < SCREEN_WIDTH
+                and sp_sy + SPAWN_SIZE > 0
+                and sp_sy < SCREEN_HEIGHT
+            ):
+                # Light green floor so it stands out as a safe zone
+                pygame.draw.rect(
+                    screen,
+                    (140, 200, 120),
+                    (sp_sx, sp_sy, SPAWN_SIZE, SPAWN_SIZE),
+                    border_radius=8,
+                )
+                # Border around it
+                pygame.draw.rect(
+                    screen,
+                    (100, 160, 80),
+                    (sp_sx, sp_sy, SPAWN_SIZE, SPAWN_SIZE),
+                    3,
+                    border_radius=8,
+                )
+                # Little "HOME" label in the center
+                home_font = pygame.font.Font(None, 22)
+                home_text = home_font.render("HOME", True, (80, 130, 60))
+                screen.blit(
+                    home_text,
+                    (
+                        sp_sx + SPAWN_SIZE // 2 - home_text.get_width() // 2,
+                        sp_sy + SPAWN_SIZE // 2 - home_text.get_height() // 2,
+                    ),
+                )
 
             # Draw biome objects that are behind the burrb
             for ox, oy, okind, osize in biome_objects:
