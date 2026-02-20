@@ -696,15 +696,68 @@ class NPC:
         # Timer to change direction randomly
         self.dir_timer = random.randint(60, 240)
         self.walk_frame = 0
+        # Combat! Some burrbs are aggressive and will attack you!
+        # About 40% of burrbs are mean. You can tell because they
+        # have angry red eyes.
+        self.aggressive = random.random() < 0.4
+        self.chase_speed = random.uniform(2.0, 3.0)  # faster when chasing!
+        self.chasing = False  # currently chasing the player?
+        self.attack_cooldown = 0  # frames until they can hit you again
 
-    def update(self):
+    def update(self, player_x=0.0, player_y=0.0):
         """Move the NPC around. This is its simple 'brain'."""
         # Rocks don't move! They just sit there being a rock.
         if self.npc_type == "rock":
             return
 
         self.walk_frame += 1
+        if self.attack_cooldown > 0:
+            self.attack_cooldown -= 1
 
+        # --- AGGRESSIVE CHASE BEHAVIOR ---
+        # If this burrb is mean and the player is close enough,
+        # it will chase you down and try to peck you!
+        NPC_SIGHT_RANGE = 200  # how far they can see you
+        NPC_LOSE_RANGE = 350  # how far before they give up chasing
+        self.chasing = False
+
+        if self.aggressive and self.npc_type == "burrb":
+            dx_to_player = player_x - self.x
+            dy_to_player = player_y - self.y
+            dist_to_player = math.sqrt(dx_to_player**2 + dy_to_player**2)
+
+            # Don't chase if player is in the spawn square (safe zone!)
+            player_in_spawn = SPAWN_RECT.collidepoint(player_x, player_y)
+
+            if dist_to_player < NPC_SIGHT_RANGE and not player_in_spawn:
+                # CHASE THE PLAYER!
+                self.chasing = True
+                if dist_to_player > 1:
+                    move_x = (dx_to_player / dist_to_player) * self.chase_speed
+                    move_y = (dy_to_player / dist_to_player) * self.chase_speed
+                    new_x = self.x + move_x
+                    new_y = self.y + move_y
+
+                    # Don't run into buildings
+                    npc_rect = pygame.Rect(new_x - 6, new_y - 6, 12, 12)
+                    blocked = False
+                    for b in buildings:
+                        if npc_rect.colliderect(b.get_rect()):
+                            blocked = True
+                            break
+                    if new_x < 30 or new_x > WORLD_WIDTH - 30:
+                        blocked = True
+                    if new_y < 30 or new_y > WORLD_HEIGHT - 30:
+                        blocked = True
+
+                    if not blocked:
+                        self.x = new_x
+                        self.y = new_y
+                    # Point toward the player
+                    self.angle = math.atan2(dy_to_player, dx_to_player)
+                return  # skip normal wandering while chasing
+
+        # --- NORMAL WANDERING ---
         # Count down the direction timer
         self.dir_timer -= 1
         if self.dir_timer <= 0:
@@ -1533,9 +1586,22 @@ def draw_npc_topdown(surface, npc, cam_x, cam_y):
             1,
             border_radius=2,
         )
-        # Eye
+        # Eye - aggressive burrbs have angry red eyes!
         eye_x = sx + 2
-        pygame.draw.circle(surface, npc.detail_color, (eye_x, sy - 2), 2)
+        if npc.aggressive:
+            eye_color = (220, 30, 30)  # angry red!
+        else:
+            eye_color = npc.detail_color
+        pygame.draw.circle(surface, eye_color, (eye_x, sy - 2), 2)
+        # Angry eyebrows on aggressive burrbs
+        if npc.aggressive:
+            pygame.draw.line(
+                surface,
+                (180, 0, 0),
+                (eye_x - 3, sy - 5),
+                (eye_x + 3, sy - 3),
+                2,
+            )
         # Spikes on top
         for i in range(3):
             spike_x = sx - 4 + i * 4
@@ -1560,6 +1626,11 @@ def draw_npc_topdown(surface, npc, cam_x, cam_y):
                 (beak_x, sy + 2),
             ],
         )
+        # Exclamation mark when chasing! So you know they spotted you.
+        if npc.chasing:
+            alert_font = pygame.font.Font(None, 20)
+            alert_text = alert_font.render("!", True, (255, 50, 50))
+            surface.blit(alert_text, (sx - 3, sy - size // 2 - 16))
 
     elif npc.npc_type == "human":
         # Head (circle)
@@ -2891,6 +2962,17 @@ facing_left = False
 walk_frame = 0
 is_walking = False
 
+# Health system!
+# The burrb has hit points. Aggressive NPCs can attack you
+# and take away your health. If you run out, you respawn
+# back at the spawn square.
+MAX_HP = 5
+player_hp = MAX_HP
+hurt_timer = 0  # frames of red flash when you get hit
+hurt_cooldown = 0  # invincibility frames after getting hit (so you don't die instantly)
+HURT_COOLDOWN_TIME = 60  # 1 second of invincibility after each hit
+death_timer = 0  # frames of the "you died" animation (0 = alive)
+
 # First person mode!
 # "angle" is the direction the burrb is looking, measured in
 # radians. 0 = looking right, pi/2 = looking down, pi = left, etc.
@@ -3505,6 +3587,7 @@ async def main():
     global jumpscare_timer, jumpscare_frame, closet_msg_timer, scare_level
     global collect_msg_timer, collect_msg_text
     global cam_x, cam_y
+    global player_hp, hurt_timer, hurt_cooldown, death_timer
     global touch_active, touch_move_target, touch_held
     global touch_pos, touch_start_pos, touch_finger_id, touch_btn_pressed
 
@@ -4701,8 +4784,57 @@ async def main():
         # UNLESS they're frozen by the Freeze ability!
         if freeze_timer <= 0:
             for npc in npcs:
-                npc.update()
+                npc.update(burrb_x, burrb_y)
         # (When frozen, NPCs just stand perfectly still - like statues!)
+
+        # --- NPC ATTACKS ---
+        # Aggressive burrbs that are close enough will peck you!
+        # You take 1 damage and get knocked back. There's a short
+        # invincibility window so you can escape.
+        if hurt_cooldown > 0:
+            hurt_cooldown -= 1
+        if hurt_timer > 0:
+            hurt_timer -= 1
+
+        if inside_building is None and death_timer <= 0:
+            for npc in npcs:
+                if not npc.aggressive or npc.npc_type == "rock":
+                    continue
+                if npc.attack_cooldown > 0:
+                    continue
+                adx = burrb_x - npc.x
+                ady = burrb_y - npc.y
+                adist = math.sqrt(adx * adx + ady * ady)
+                if adist < 18:  # close enough to attack!
+                    if hurt_cooldown <= 0:
+                        # OUCH! You got pecked!
+                        player_hp -= 1
+                        hurt_timer = 20  # red flash for 20 frames
+                        hurt_cooldown = HURT_COOLDOWN_TIME
+                        npc.attack_cooldown = 40
+                        # Knock the player back!
+                        if adist > 1:
+                            burrb_x += (adx / adist) * 15
+                            burrb_y += (ady / adist) * 15
+                            # Keep in world bounds
+                            burrb_x = max(20, min(WORLD_WIDTH - 20, burrb_x))
+                            burrb_y = max(20, min(WORLD_HEIGHT - 20, burrb_y))
+
+        # --- DEATH AND RESPAWN ---
+        # If HP hits 0, play a short death animation then respawn
+        # at the spawn square with full health!
+        if player_hp <= 0 and death_timer <= 0:
+            death_timer = 120  # 2 seconds of death animation
+            player_hp = 0
+        if death_timer > 0:
+            death_timer -= 1
+            if death_timer <= 0:
+                # Respawn!
+                player_hp = MAX_HP
+                burrb_x = float(SPAWN_X)
+                burrb_y = float(SPAWN_Y)
+                hurt_cooldown = 120  # extra invincibility after respawning
+                hurt_timer = 0
 
         # --- UPDATE CARS ---
         # Cars drive along roads every frame
@@ -5417,6 +5549,87 @@ async def main():
 
         screen.blit(mode_shadow, (12, 42))
         screen.blit(mode_text, (10, 40))
+
+        # Health bar! Shows your HP as little hearts.
+        hp_x = 10
+        hp_y = 62
+        hp_label = font.render("HP:", True, (255, 100, 100))
+        hp_shadow = font.render("HP:", True, BLACK)
+        screen.blit(hp_shadow, (hp_x + 1, hp_y + 1))
+        screen.blit(hp_label, (hp_x, hp_y))
+        for i in range(MAX_HP):
+            heart_x = hp_x + 32 + i * 18
+            heart_y = hp_y + 3
+            if i < player_hp:
+                # Full heart (red)
+                pygame.draw.circle(screen, (220, 40, 40), (heart_x - 3, heart_y), 5)
+                pygame.draw.circle(screen, (220, 40, 40), (heart_x + 3, heart_y), 5)
+                pygame.draw.polygon(
+                    screen,
+                    (220, 40, 40),
+                    [
+                        (heart_x - 7, heart_y + 1),
+                        (heart_x, heart_y + 9),
+                        (heart_x + 7, heart_y + 1),
+                    ],
+                )
+                # Shine
+                pygame.draw.circle(
+                    screen, (255, 120, 120), (heart_x - 3, heart_y - 1), 2
+                )
+            else:
+                # Empty heart (dark outline)
+                pygame.draw.circle(screen, (80, 30, 30), (heart_x - 3, heart_y), 5, 1)
+                pygame.draw.circle(screen, (80, 30, 30), (heart_x + 3, heart_y), 5, 1)
+                pygame.draw.polygon(
+                    screen,
+                    (80, 30, 30),
+                    [
+                        (heart_x - 7, heart_y + 1),
+                        (heart_x, heart_y + 9),
+                        (heart_x + 7, heart_y + 1),
+                    ],
+                    1,
+                )
+
+        # Hurt flash! Screen edges flash red when you take damage.
+        if hurt_timer > 0:
+            flash_alpha = int(150 * (hurt_timer / 20.0))
+            flash_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            # Red vignette around the edges
+            for edge in range(20):
+                a = max(0, flash_alpha - edge * 8)
+                if a <= 0:
+                    break
+                pygame.draw.rect(
+                    flash_surf,
+                    (255, 0, 0, a),
+                    (edge, edge, SCREEN_WIDTH - edge * 2, SCREEN_HEIGHT - edge * 2),
+                    3,
+                )
+            screen.blit(flash_surf, (0, 0))
+
+        # Death screen! Fades to black and shows "You Died" text.
+        if death_timer > 0:
+            fade_alpha = int(200 * (1.0 - death_timer / 120.0))
+            death_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            death_surf.fill((0, 0, 0, min(200, fade_alpha)))
+            screen.blit(death_surf, (0, 0))
+            if death_timer < 90:
+                death_font = pygame.font.Font(None, 64)
+                dt_text = death_font.render("You Died!", True, (220, 40, 40))
+                dt_shadow = death_font.render("You Died!", True, BLACK)
+                dtx = SCREEN_WIDTH // 2 - dt_text.get_width() // 2
+                dty = SCREEN_HEIGHT // 2 - dt_text.get_height() // 2
+                screen.blit(dt_shadow, (dtx + 2, dty + 2))
+                screen.blit(dt_text, (dtx, dty))
+                # Respawn hint
+                if death_timer < 60:
+                    hint_text = font.render(
+                        "Respawning at HOME...", True, (180, 180, 180)
+                    )
+                    hx = SCREEN_WIDTH // 2 - hint_text.get_width() // 2
+                    screen.blit(hint_text, (hx, dty + 50))
 
         # Currency counters! Show all collected currencies in the top-right.
         currency_y = 10
