@@ -3212,6 +3212,20 @@ SWAMP_MONSTER_DURATION = 600  # 10 seconds!
 SWAMP_MONSTER_SPEED = 2.0
 SWAMP_MONSTER_RADIUS = 300  # how far it chases enemies
 
+# ============================================================
+# SODA CAN MONSTERS!
+# ============================================================
+# You start with this ability! Press 1 to spawn a pack of mini
+# soda can monsters that chase down nearby burrbs and attack them.
+# They're little angry soda cans with tiny legs that run around
+# biting everything in sight. You get 3 of them at once!
+soda_cans = []  # list of active soda can monsters (dicts)
+SODA_CAN_DURATION = 480  # 8 seconds
+SODA_CAN_SPEED = 2.8  # fast little guys!
+SODA_CAN_RADIUS = 250  # how far they chase enemies
+SODA_CAN_COOLDOWN_TIME = 300  # 5 second cooldown between spawns
+soda_can_cooldown = 0  # frames until you can spawn more
+
 # The shop now has tabs! LEFT/RIGHT arrows switch between tabs.
 shop_tab = 0  # 0=chips, 1=berries, 2=gems, 3=snowflakes, 4=mushrooms
 
@@ -3620,6 +3634,7 @@ async def main():
     global shadow_step_cooldown
     global swamp_monster_active, swamp_monster_x, swamp_monster_y
     global swamp_monster_timer, swamp_monster_walk
+    global soda_cans, soda_can_cooldown
     global dash_cooldown, dash_active
     global freeze_timer, invisible_timer, giant_timer, giant_scale
     global bounce_timer, bounce_cooldown, bounce_height
@@ -4126,6 +4141,26 @@ async def main():
                                 burrb_y = best_y
                                 teleport_flash = 15  # reuse the flash effect
 
+                # Press 1 for SODA CAN MONSTERS! (free ability - no purchase needed!)
+                if event.key == pygame.K_1:
+                    if len(soda_cans) == 0 and soda_can_cooldown <= 0:
+                        if inside_building is None:
+                            # Spawn 3 mini soda cans around the player!
+                            for i in range(3):
+                                angle = i * (2 * math.pi / 3)  # spread evenly
+                                sx = burrb_x + math.cos(angle) * 25
+                                sy = burrb_y + math.sin(angle) * 25
+                                soda_cans.append(
+                                    {
+                                        "x": sx,
+                                        "y": sy,
+                                        "timer": SODA_CAN_DURATION,
+                                        "walk": 0,
+                                        "attack_cd": 0,
+                                    }
+                                )
+                            soda_can_cooldown = SODA_CAN_COOLDOWN_TIME
+
                 # Press K for SWAMP MONSTER! (Swamp - index 11)
                 if event.key == pygame.K_k:
                     if biome_ability_unlocked[11] and not swamp_monster_active:
@@ -4586,6 +4621,52 @@ async def main():
                         swamp_monster_y += (
                             (burrb_y - swamp_monster_y) / fd
                         ) * SWAMP_MONSTER_SPEED
+
+        # Soda can monster AI!
+        if soda_can_cooldown > 0:
+            soda_can_cooldown -= 1
+        for can in soda_cans:
+            can["timer"] -= 1
+            can["walk"] += 1
+            if can["attack_cd"] > 0:
+                can["attack_cd"] -= 1
+        # Remove expired soda cans
+        soda_cans = [c for c in soda_cans if c["timer"] > 0]
+        # Each soda can chases the nearest NPC and bites it!
+        for can in soda_cans:
+            nearest_npc = None
+            nearest_dist = SODA_CAN_RADIUS
+            for npc in npcs:
+                if npc.npc_type == "rock" or not npc.alive:
+                    continue
+                md = math.sqrt((npc.x - can["x"]) ** 2 + (npc.y - can["y"]) ** 2)
+                if md < nearest_dist:
+                    nearest_dist = md
+                    nearest_npc = npc
+            if nearest_npc is not None:
+                md = nearest_dist
+                if md > 1:
+                    can["x"] += ((nearest_npc.x - can["x"]) / md) * SODA_CAN_SPEED
+                    can["y"] += ((nearest_npc.y - can["y"]) / md) * SODA_CAN_SPEED
+                # Bite NPC on contact! Deal damage!
+                if md < 14 and can["attack_cd"] <= 0:
+                    nearest_npc.hp -= 1
+                    nearest_npc.hurt_flash = 15
+                    can["attack_cd"] = 30  # bite cooldown
+                    # Knock them back
+                    if md > 1:
+                        nearest_npc.x += ((nearest_npc.x - can["x"]) / md) * 10
+                        nearest_npc.y += ((nearest_npc.y - can["y"]) / md) * 10
+                        nearest_npc.x = max(30, min(WORLD_WIDTH - 30, nearest_npc.x))
+                        nearest_npc.y = max(30, min(WORLD_HEIGHT - 30, nearest_npc.y))
+                    if nearest_npc.hp <= 0:
+                        nearest_npc.alive = False
+            else:
+                # No NPC nearby, follow the burrb
+                fd = math.sqrt((burrb_x - can["x"]) ** 2 + (burrb_y - can["y"]) ** 2)
+                if fd > 40 and fd > 1:
+                    can["x"] += ((burrb_x - can["x"]) / fd) * SODA_CAN_SPEED
+                    can["y"] += ((burrb_y - can["y"]) / fd) * SODA_CAN_SPEED
 
         # --- MOVEMENT ---
         # Check which keys are currently held down
@@ -5509,6 +5590,83 @@ async def main():
                         2,
                     )
 
+            # Soda Can Monsters!
+            if len(soda_cans) > 0 and inside_building is None:
+                for can in soda_cans:
+                    cx = int(can["x"] - cam_x)
+                    cy = int(can["y"] - cam_y)
+                    if (
+                        cx < -30
+                        or cx > SCREEN_WIDTH + 30
+                        or cy < -30
+                        or cy > SCREEN_HEIGHT + 30
+                    ):
+                        continue
+                    wf = can["walk"]
+                    leg_off = math.sin(wf * 0.4) * 2
+
+                    # Tiny legs (2 on each side, animated!)
+                    pygame.draw.line(
+                        screen,
+                        (60, 60, 60),
+                        (cx - 4, cy + 7),
+                        (cx - 6, cy + 11 + leg_off),
+                        2,
+                    )
+                    pygame.draw.line(
+                        screen,
+                        (60, 60, 60),
+                        (cx + 4, cy + 7),
+                        (cx + 6, cy + 11 - leg_off),
+                        2,
+                    )
+
+                    # Soda can body (red cylinder shape)
+                    pygame.draw.rect(
+                        screen, (200, 30, 30), (cx - 5, cy - 8, 10, 16), border_radius=3
+                    )
+                    # Silver top and bottom (like a real can)
+                    pygame.draw.rect(
+                        screen,
+                        (180, 180, 190),
+                        (cx - 5, cy - 8, 10, 3),
+                        border_radius=2,
+                    )
+                    pygame.draw.rect(
+                        screen,
+                        (180, 180, 190),
+                        (cx - 5, cy + 5, 10, 3),
+                        border_radius=2,
+                    )
+                    # White label stripe
+                    pygame.draw.rect(screen, (240, 240, 240), (cx - 4, cy - 2, 8, 4))
+                    # Outline
+                    pygame.draw.rect(
+                        screen,
+                        (120, 15, 15),
+                        (cx - 5, cy - 8, 10, 16),
+                        1,
+                        border_radius=3,
+                    )
+
+                    # Angry face on the can!
+                    # Eyes (little white dots with black pupils)
+                    pygame.draw.circle(screen, (255, 255, 255), (cx - 2, cy - 4), 2)
+                    pygame.draw.circle(screen, (255, 255, 255), (cx + 2, cy - 4), 2)
+                    pygame.draw.circle(screen, (0, 0, 0), (cx - 2, cy - 4), 1)
+                    pygame.draw.circle(screen, (0, 0, 0), (cx + 2, cy - 4), 1)
+                    # Angry eyebrows
+                    pygame.draw.line(
+                        screen, (0, 0, 0), (cx - 4, cy - 7), (cx - 1, cy - 6), 1
+                    )
+                    pygame.draw.line(
+                        screen, (0, 0, 0), (cx + 4, cy - 7), (cx + 1, cy - 6), 1
+                    )
+                    # Grumpy mouth
+                    pygame.draw.line(
+                        screen, (0, 0, 0), (cx - 2, cy + 2), (cx + 2, cy + 2), 1
+                    )
+
             # Draw the tongue in top-down mode!
             if tongue_active and tongue_length > 0:
                 burrb_sx = burrb_x - cam_x
@@ -5593,7 +5751,7 @@ async def main():
             mode_text = font.render("[TOP DOWN]", True, BURRB_LIGHT_BLUE)
             mode_shadow = font.render("[TOP DOWN]", True, BLACK)
             help_msg = (
-                "Arrows/WASD walk  |  O tongue  |  E enter  |  TAB shop  |  ESC quit"
+                "WASD walk | O tongue | 1 soda cans | E enter | TAB shop | ESC quit"
             )
 
         screen.blit(mode_shadow, (12, 42))
@@ -5751,6 +5909,17 @@ async def main():
         if swamp_monster_active:
             active_abilities.append(
                 ("MONSTER", (30, 100, 40), swamp_monster_timer, SWAMP_MONSTER_DURATION)
+            )
+        if len(soda_cans) > 0:
+            # Show the timer of the soda can with the most time left
+            max_timer = max(c["timer"] for c in soda_cans)
+            active_abilities.append(
+                (
+                    "SODA x" + str(len(soda_cans)),
+                    (200, 30, 30),
+                    max_timer,
+                    SODA_CAN_DURATION,
+                )
             )
         # Show always-on abilities as small badges
         passive_badges = []
