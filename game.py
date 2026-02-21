@@ -135,6 +135,18 @@ from src.systems.combat import (
 from src.systems.abilities import AbilityManager
 from src.systems.shop import try_buy_ability
 
+# --- Refactored imports (Phase 6) ---
+from src.input.touch import (
+    TouchState,
+    TOUCH_BUTTONS,
+    TOUCH_ABILITY_BUTTONS,
+    TOUCH_BTN_RADIUS,
+    touch_hit_button as _touch_hit_button,
+    draw_touch_buttons as _draw_touch_buttons,
+    handle_touch_event,
+)
+from src.input.keyboard import handle_keydown, KeyboardResult
+
 # Initialize pygame - this starts up the game engine
 pygame.init()
 
@@ -317,142 +329,16 @@ shop_tab = 0  # 0=chips, 1=berries, 2=gems, 3=snowflakes, 4=mushrooms
 # All other font usage is in src/rendering/ui.py and src/rendering/shop.py
 
 # ============================================================
-# TOUCH CONTROLS
+# TOUCH CONTROLS (Phase 6: moved to src/input/touch.py)
 # ============================================================
 # Touch support for phones, tablets, and touchscreen computers!
 # Tap the screen to move, use on-screen buttons for actions.
 # Touch is auto-detected: buttons appear when you touch the screen.
+#
+# TOUCH_BUTTONS, TOUCH_ABILITY_BUTTONS, TOUCH_BTN_RADIUS, touch_hit_button,
+# draw_touch_buttons, and handle_touch_event are all in src/input/touch.py.
 
-touch_active = False  # has the player used touch? (shows buttons)
-touch_move_target = None  # (x, y) world position to walk toward, or None
-touch_held = False  # is a finger currently touching the screen?
-touch_pos = (0, 0)  # current touch position on screen
-touch_start_pos = (0, 0)  # where the finger first touched
-touch_finger_id = None  # track which finger is the main one
-
-# On-screen button layout (right side of screen)
-# Each button: (label, center_x, center_y, radius, key_action)
-TOUCH_BTN_RADIUS = 28
-TOUCH_BTN_PAD = 8
-_br = TOUCH_BTN_RADIUS
-_bx = SCREEN_WIDTH - _br - 12  # right edge
-_bx2 = _bx - _br * 2 - TOUCH_BTN_PAD  # second column from right
-
-TOUCH_BUTTONS = [
-    # Right column (main actions)
-    ("E", _bx, SCREEN_HEIGHT - _br - 12, _br, "action_e"),
-    ("O", _bx, SCREEN_HEIGHT - _br * 3 - 20, _br, "action_o"),
-    # Second column
-    ("SHOP", _bx2, SCREEN_HEIGHT - _br - 12, _br, "toggle_shop"),
-    ("UNSTUCK", _bx2, SCREEN_HEIGHT - _br * 3 - 20, _br, "unstuck"),
-]
-
-# Extra ability buttons (only shown when unlocked)
-TOUCH_ABILITY_BUTTONS = [
-    ("F", _bx2, SCREEN_HEIGHT - _br * 5 - 28, _br - 4, "ability_f"),
-    ("I", _bx, SCREEN_HEIGHT - _br * 5 - 28, _br - 4, "ability_i"),
-    (
-        "G",
-        _bx2 + _br + TOUCH_BTN_PAD // 2,
-        SCREEN_HEIGHT - _br * 7 - 36,
-        _br - 4,
-        "ability_g",
-    ),
-    ("B", _bx2, SCREEN_HEIGHT - _br * 9 - 44, _br - 4, "ability_b"),
-    ("T", _bx, SCREEN_HEIGHT - _br * 9 - 44, _br - 4, "ability_t"),
-    (
-        "Q",
-        _bx2 + _br + TOUCH_BTN_PAD // 2,
-        SCREEN_HEIGHT - _br * 11 - 52,
-        _br - 4,
-        "ability_q",
-    ),
-]
-
-touch_btn_pressed = None  # which button is currently being pressed
-
-
-def touch_hit_button(tx, ty):
-    """Check if a touch at (tx, ty) hits any on-screen button.
-    Returns the action string or None."""
-    for label, bx, by, br, action in TOUCH_BUTTONS:
-        dx = tx - bx
-        dy = ty - by
-        if dx * dx + dy * dy <= (br + 8) * (br + 8):
-            return action
-    # Check ability buttons only if unlocked
-    for i, (label, bx, by, br, action) in enumerate(TOUCH_ABILITY_BUTTONS):
-        # F=index 3, I=index 4, G=index 5
-        ability_idx = i + 3
-        if (
-            ability_idx < len(abilities.ability_unlocked)
-            and abilities.ability_unlocked[ability_idx]
-        ):
-            dx = tx - bx
-            dy = ty - by
-            if dx * dx + dy * dy <= (br + 8) * (br + 8):
-                return action
-    return None
-
-
-def draw_touch_buttons(surface):
-    """Draw the on-screen touch buttons."""
-    btn_font = pygame.font.Font(None, 24)
-
-    for label, bx, by, br, action in TOUCH_BUTTONS:
-        # Button background (semi-transparent circle)
-        btn_surf = pygame.Surface((br * 2 + 2, br * 2 + 2), pygame.SRCALPHA)
-        pressed = touch_btn_pressed == action
-        if pressed:
-            pygame.draw.circle(btn_surf, (255, 255, 255, 160), (br + 1, br + 1), br)
-        else:
-            pygame.draw.circle(btn_surf, (255, 255, 255, 70), (br + 1, br + 1), br)
-        pygame.draw.circle(btn_surf, (255, 255, 255, 120), (br + 1, br + 1), br, 2)
-        surface.blit(btn_surf, (bx - br - 1, by - br - 1))
-        # Label
-        txt = btn_font.render(label, True, WHITE)
-        surface.blit(txt, (bx - txt.get_width() // 2, by - txt.get_height() // 2))
-
-    # Ability buttons (only show if unlocked)
-    for i, (label, bx, by, br, action) in enumerate(TOUCH_ABILITY_BUTTONS):
-        ability_idx = i + 3
-        if (
-            ability_idx < len(abilities.ability_unlocked)
-            and abilities.ability_unlocked[ability_idx]
-        ):
-            btn_surf = pygame.Surface((br * 2 + 2, br * 2 + 2), pygame.SRCALPHA)
-            pressed = touch_btn_pressed == action
-            # Color-code ability buttons
-            colors = [(100, 180, 255, 100), (180, 100, 255, 100), (100, 255, 100, 100)]
-            bg_color = colors[i] if i < len(colors) else (255, 255, 255, 70)
-            if pressed:
-                bg_color = (bg_color[0], bg_color[1], bg_color[2], 200)
-            pygame.draw.circle(btn_surf, bg_color, (br + 1, br + 1), br)
-            pygame.draw.circle(btn_surf, (255, 255, 255, 120), (br + 1, br + 1), br, 2)
-            surface.blit(btn_surf, (bx - br - 1, by - br - 1))
-            txt = btn_font.render(label, True, WHITE)
-            surface.blit(txt, (bx - txt.get_width() // 2, by - txt.get_height() // 2))
-
-    # Draw move target indicator if active (small pulsing circle)
-    if touch_move_target is not None:
-        tgt_x, tgt_y = touch_move_target
-        if inside_building is not None:
-            # Interior coords to screen coords
-            icam_x = interior_x - SCREEN_WIDTH // 2
-            icam_y = interior_y - SCREEN_HEIGHT // 2
-            sx = int(tgt_x - icam_x)
-            sy = int(tgt_y - icam_y)
-        else:
-            # World coords to screen coords
-            sx = int(tgt_x - cam_x)
-            sy = int(tgt_y - cam_y)
-        if 0 <= sx <= SCREEN_WIDTH and 0 <= sy <= SCREEN_HEIGHT:
-            pulse = abs(math.sin(pygame.time.get_ticks() * 0.005)) * 4
-            r = int(6 + pulse)
-            ind_surf = pygame.Surface((r * 2 + 2, r * 2 + 2), pygame.SRCALPHA)
-            pygame.draw.circle(ind_surf, (255, 255, 100, 120), (r + 1, r + 1), r)
-            pygame.draw.circle(ind_surf, (255, 255, 100, 200), (r + 1, r + 1), r, 1)
-            surface.blit(ind_surf, (sx - r - 1, sy - r - 1))
+touch = TouchState()  # all touch state lives here (Phase 6)
 
 
 # (can_move_to moved to src/systems/collision.py - Phase 5)
@@ -475,8 +361,7 @@ async def main():
     global collect_msg_timer, collect_msg_text
     global cam_x, cam_y
     global player_hp, hurt_timer, hurt_cooldown, death_timer
-    global touch_active, touch_move_target, touch_held
-    global touch_pos, touch_start_pos, touch_finger_id, touch_btn_pressed
+    # (touch state is now managed by the `touch` TouchState object - Phase 6)
 
     # ============================================================
     # MAIN GAME LOOP
@@ -497,49 +382,84 @@ async def main():
             if event.type == pygame.QUIT:
                 running = False
             if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    if shop_open:
-                        shop_open = False
-                    else:
-                        running = False
+                # --- Phase 6: delegate to src/input/keyboard.handle_keydown ---
+                kb = handle_keydown(
+                    event,
+                    shop_open,
+                    shop_tab,
+                    shop_cursor,
+                    abilities,
+                    chips_collected,
+                    berries_collected,
+                    gems_collected,
+                    snowflakes_collected,
+                    mushrooms_collected,
+                    inside_building,
+                    burrb_x,
+                    burrb_y,
+                    burrb_angle,
+                    facing_left,
+                    tongue_active,
+                    interior_x,
+                    interior_y,
+                    biome_collectibles,
+                    buildings,
+                    jumpscare_timer,
+                    biome_objects,
+                    trees,
+                    can_move_to,
+                )
 
-                # TAB opens/closes the chip shop!
-                if event.key == pygame.K_TAB:
+                # Apply result: quit / shop
+                if kb.quit:
+                    running = False
+                    continue
+                if kb.close_shop:
+                    shop_open = False
+                    continue
+                if kb.toggle_shop:
                     shop_open = not shop_open
                     shop_cursor = 0
+                    continue
 
-                # When the shop is open, handle shop navigation
+                # Apply result: shop navigation (only when shop is open)
                 if shop_open:
-                    # Get current tab's ability list length
-                    tab_abs, tab_cur, tab_name, _, _, _, tab_unlock, tab_indices = (
-                        get_shop_tab_info(
-                            shop_tab,
-                            ABILITIES,
-                            chips_collected,
-                            abilities.ability_unlocked,
-                            BIOME_ABILITIES,
-                            abilities.biome_ability_unlocked,
-                            berries_collected,
-                            gems_collected,
-                            snowflakes_collected,
-                            mushrooms_collected,
+                    if kb.shop_tab_delta:
+                        shop_tab = (shop_tab + kb.shop_tab_delta) % 5
+                        shop_cursor = 0
+                    if kb.shop_cursor_delta:
+                        tab_abs, tab_cur, tab_name, _, _, _, tab_unlock, tab_indices = (
+                            get_shop_tab_info(
+                                shop_tab,
+                                ABILITIES,
+                                chips_collected,
+                                abilities.ability_unlocked,
+                                BIOME_ABILITIES,
+                                abilities.biome_ability_unlocked,
+                                berries_collected,
+                                gems_collected,
+                                snowflakes_collected,
+                                mushrooms_collected,
+                            )
                         )
-                    )
-                    tab_len = len(tab_abs)
-                    if event.key == pygame.K_LEFT:
-                        shop_tab = (shop_tab - 1) % 5
-                        shop_cursor = 0
-                    if event.key == pygame.K_RIGHT:
-                        shop_tab = (shop_tab + 1) % 5
-                        shop_cursor = 0
-                    if event.key == pygame.K_UP:
-                        shop_cursor = (shop_cursor - 1) % tab_len
-                    if event.key == pygame.K_DOWN:
-                        shop_cursor = (shop_cursor + 1) % tab_len
-                    if event.key == pygame.K_RETURN:
-                        # Try to buy the selected ability!
+                        tab_len = len(tab_abs)
+                        shop_cursor = (shop_cursor + kb.shop_cursor_delta) % tab_len
+                    if kb.shop_buy:
+                        tab_abs, tab_cur, tab_name, _, _, _, tab_unlock, tab_indices = (
+                            get_shop_tab_info(
+                                shop_tab,
+                                ABILITIES,
+                                chips_collected,
+                                abilities.ability_unlocked,
+                                BIOME_ABILITIES,
+                                abilities.biome_ability_unlocked,
+                                berries_collected,
+                                gems_collected,
+                                snowflakes_collected,
+                                mushrooms_collected,
+                            )
+                        )
                         if shop_tab == 0:
-                            # Chip shop - original abilities
                             cost = ABILITIES[shop_cursor][1]
                             if (
                                 not abilities.ability_unlocked[shop_cursor]
@@ -548,11 +468,12 @@ async def main():
                                 chips_collected -= cost
                                 abilities.ability_unlocked[shop_cursor] = True
                         else:
-                            # Biome shop - use the right currency
                             cost = tab_abs[shop_cursor][1]
                             real_idx = tab_indices[shop_cursor]
-                            if not abilities.biome_ability_unlocked[real_idx] and tab_cur >= cost:
-                                # Deduct from the right currency
+                            if (
+                                not abilities.biome_ability_unlocked[real_idx]
+                                and tab_cur >= cost
+                            ):
                                 if shop_tab == 1:
                                     berries_collected -= cost
                                 elif shop_tab == 2:
@@ -562,20 +483,17 @@ async def main():
                                 elif shop_tab == 4:
                                     mushrooms_collected -= cost
                                 abilities.biome_ability_unlocked[real_idx] = True
-                    # Skip all other game input when shop is open
-                    continue
+                    continue  # skip all other game input when shop is open
 
-                # Press U to unstuck! Teleports you to a random clear spot.
-                if event.key == pygame.K_u:
+                # Apply result: unstuck
+                if kb.unstuck:
                     if inside_building is not None:
-                        # If stuck inside a building, just exit it
                         burrb_x = saved_outdoor_x
                         burrb_y = saved_outdoor_y
                         burrb_angle = saved_outdoor_angle
                         inside_building = None
-                        touch_move_target = None
+                        touch.touch_move_target = None
                     else:
-                        # Find a random spot with no buildings under it
                         for _try in range(200):
                             rx = random.randint(100, WORLD_WIDTH - 100)
                             ry = random.randint(100, WORLD_HEIGHT - 100)
@@ -586,295 +504,258 @@ async def main():
                             if not blocked:
                                 burrb_x = float(rx)
                                 burrb_y = float(ry)
-                                touch_move_target = None
+                                touch.touch_move_target = None
                                 break
 
-                # Press O to shoot the tongue!
-                if event.key == pygame.K_o:
-                    if not tongue_active and inside_building is None:
-                        tongue_active = True
-                        tongue_length = 0.0
-                        tongue_retracting = False
-                        tongue_hit_npc = None
-                        # Tongue shoots in the direction the burrb is facing
-                        if facing_left:
-                            tongue_angle = math.pi  # left
-                        else:
-                            tongue_angle = 0.0  # right
+                # Apply result: tongue
+                if kb.shoot_tongue:
+                    tongue_active = True
+                    tongue_length = 0.0
+                    tongue_retracting = False
+                    tongue_hit_npc = None
+                    tongue_angle = kb.tongue_angle
 
-                # Press E to enter/exit buildings!
-                if event.key == pygame.K_e:
-                    if inside_building is None:
-                        # Try to enter a building (check if near a door)
-                        nearby = get_nearby_door_building(burrb_x, burrb_y)
-                        if nearby is not None:
-                            inside_building = nearby
-                            # Save outdoor position so we can come back
-                            saved_outdoor_x = burrb_x
-                            saved_outdoor_y = burrb_y
-                            saved_outdoor_angle = burrb_angle
-                            # Move burrb to interior spawn point
-                            interior_x = float(nearby.spawn_x)
-                            interior_y = float(nearby.spawn_y)
-                            burrb_angle = math.pi * 1.5  # face upward (into the room)
-                            touch_move_target = None  # clear touch target
-                        else:
-                            # Try to pick up a biome collectible!
-                            for coll in biome_collectibles:
-                                if coll[3]:  # already collected
-                                    continue
-                                cdx = burrb_x - coll[0]
-                                cdy = burrb_y - coll[1]
-                                cdist = math.sqrt(cdx * cdx + cdy * cdy)
-                                if cdist < 30:  # close enough to grab!
-                                    coll[3] = True  # mark as collected
-                                    # Each item adds to its own currency!
-                                    if coll[2] == "berry":
-                                        berries_collected += 1
-                                        collect_msg_text = "Found a berry! +1 berry"
-                                    elif coll[2] == "gem":
-                                        gems_collected += 1
-                                        collect_msg_text = "Found a gem! +1 gem"
-                                    elif coll[2] == "snowflake":
-                                        snowflakes_collected += 1
-                                        collect_msg_text = (
-                                            "Caught a snowflake! +1 snowflake"
-                                        )
-                                    elif coll[2] == "glow_mushroom":
-                                        mushrooms_collected += 1
-                                        collect_msg_text = (
-                                            "Picked a glowing mushroom! +1 mushroom"
-                                        )
-                                    collect_msg_timer = 90  # show for 1.5 seconds
-                                    break  # only pick up one at a time
-                    else:
-                        # Try to open the closet!
-                        bld = inside_building
-                        if (
-                            not bld.closet_opened
-                            and bld.closet_x > 0
-                            and jumpscare_timer <= 0
-                        ):
-                            cl_dx = interior_x - bld.closet_x
-                            cl_dy = interior_y - bld.closet_y
-                            cl_dist = math.sqrt(cl_dx * cl_dx + cl_dy * cl_dy)
-                            if cl_dist < 30:  # close enough to open!
-                                bld.closet_opened = True
-                                # 10% chance of jump scare, 90% chance of 2 chips!
-                                if random.random() < 0.1:
-                                    # JUMP SCARE! Gets worse every time!
-                                    bld.closet_jumpscare = True
-                                    scare_level += 1
-                                    # Lasts longer each time: 2.5s, 3.5s, 4.5s, 5.5s...
-                                    jumpscare_timer = (
-                                        JUMPSCARE_DURATION + scare_level * 60
+                # Apply result: enter/exit/interact
+                if kb.enter_building and inside_building is None:
+                    nearby = get_nearby_door_building(burrb_x, burrb_y)
+                    if nearby is not None:
+                        inside_building = nearby
+                        saved_outdoor_x = burrb_x
+                        saved_outdoor_y = burrb_y
+                        saved_outdoor_angle = burrb_angle
+                        interior_x = float(nearby.spawn_x)
+                        interior_y = float(nearby.spawn_y)
+                        burrb_angle = math.pi * 1.5
+                        touch.touch_move_target = None
+                    elif kb.collect_item:
+                        for coll in biome_collectibles:
+                            if coll[3]:
+                                continue
+                            cdx = burrb_x - coll[0]
+                            cdy = burrb_y - coll[1]
+                            cdist = math.sqrt(cdx * cdx + cdy * cdy)
+                            if cdist < 30:
+                                coll[3] = True
+                                if coll[2] == "berry":
+                                    berries_collected += 1
+                                    collect_msg_text = "Found a berry! +1 berry"
+                                elif coll[2] == "gem":
+                                    gems_collected += 1
+                                    collect_msg_text = "Found a gem! +1 gem"
+                                elif coll[2] == "snowflake":
+                                    snowflakes_collected += 1
+                                    collect_msg_text = (
+                                        "Caught a snowflake! +1 snowflake"
                                     )
-                                    jumpscare_frame = 0
-                                else:
-                                    # Found 2 chips!
-                                    chips_collected += 2
-                                    closet_msg_timer = 120  # show message for 2 sec
+                                elif coll[2] == "glow_mushroom":
+                                    mushrooms_collected += 1
+                                    collect_msg_text = (
+                                        "Picked a glowing mushroom! +1 mushroom"
+                                    )
+                                collect_msg_timer = 90
+                                break
 
-                        # Try to steal the chips! (check if near the chip bag)
-                        if not bld.chips_stolen and bld.chips_x > 0:
-                            chip_dx = interior_x - bld.chips_x
-                            chip_dy = interior_y - bld.chips_y
-                            chip_dist = math.sqrt(chip_dx * chip_dx + chip_dy * chip_dy)
-                            if chip_dist < 30:  # close enough to grab!
-                                bld.chips_stolen = True
-                                bld.resident_angry = True  # uh oh!
-                                chips_collected += 1
+                if kb.open_closet and inside_building is not None:
+                    bld = inside_building
+                    if (
+                        not bld.closet_opened
+                        and bld.closet_x > 0
+                        and jumpscare_timer <= 0
+                    ):
+                        cl_dx = interior_x - bld.closet_x
+                        cl_dy = interior_y - bld.closet_y
+                        cl_dist = math.sqrt(cl_dx * cl_dx + cl_dy * cl_dy)
+                        if cl_dist < 30:
+                            bld.closet_opened = True
+                            if random.random() < 0.1:
+                                bld.closet_jumpscare = True
+                                scare_level += 1
+                                jumpscare_timer = JUMPSCARE_DURATION + scare_level * 60
+                                jumpscare_frame = 0
+                            else:
+                                chips_collected += 2
+                                closet_msg_timer = 120
 
-                        # Try to shake the bed! (check if near the bed)
-                        if not bld.bed_shaken and bld.bed_x > 0:
-                            bed_dx = interior_x - bld.bed_x
-                            bed_dy = interior_y - bld.bed_y
-                            bed_dist = math.sqrt(bed_dx * bed_dx + bed_dy * bed_dy)
-                            if bed_dist < 30:  # close enough to shake!
-                                bld.bed_shaken = True
-                                # 30% chance a monster crawls out!
-                                if random.random() < 0.3:
-                                    bld.bed_monster = True
-                                    bld.monster_active = True
-                                    bld.monster_x = bld.bed_x
-                                    bld.monster_y = bld.bed_y
+                if kb.steal_chips and inside_building is not None:
+                    bld = inside_building
+                    if not bld.chips_stolen and bld.chips_x > 0:
+                        chip_dx = interior_x - bld.chips_x
+                        chip_dy = interior_y - bld.chips_y
+                        chip_dist = math.sqrt(chip_dx * chip_dx + chip_dy * chip_dy)
+                        if chip_dist < 30:
+                            bld.chips_stolen = True
+                            bld.resident_angry = True
+                            chips_collected += 1
 
-                        # Try to exit the building (check if near interior door)
-                        if is_at_interior_door(inside_building, interior_x, interior_y):
-                            # Put burrb back outside, just below the door
-                            burrb_x = saved_outdoor_x
-                            burrb_y = saved_outdoor_y
-                            burrb_angle = saved_outdoor_angle
-                            inside_building = None
-                            touch_move_target = None  # clear touch target
+                if kb.shake_bed and inside_building is not None:
+                    bld = inside_building
+                    if not bld.bed_shaken and bld.bed_x > 0:
+                        bed_dx = interior_x - bld.bed_x
+                        bed_dy = interior_y - bld.bed_y
+                        bed_dist = math.sqrt(bed_dx * bed_dx + bed_dy * bed_dy)
+                        if bed_dist < 30:
+                            bld.bed_shaken = True
+                            if random.random() < 0.3:
+                                bld.bed_monster = True
+                                bld.monster_active = True
+                                bld.monster_x = bld.bed_x
+                                bld.monster_y = bld.bed_y
 
-                # --- ABILITY ACTIVATION KEYS ---
+                if kb.exit_building and inside_building is not None:
+                    if is_at_interior_door(inside_building, interior_x, interior_y):
+                        burrb_x = saved_outdoor_x
+                        burrb_y = saved_outdoor_y
+                        burrb_angle = saved_outdoor_angle
+                        inside_building = None
+                        touch.touch_move_target = None
 
-                # Press F to FREEZE all nearby burrbs!
-                if event.key == pygame.K_f:
+                # --- Ability activations ---
+
+                if kb.activate_freeze:
                     if abilities.ability_unlocked[3] and abilities.freeze_timer <= 0:
-                        abilities.freeze_timer = 300  # 5 seconds at 60fps
+                        abilities.freeze_timer = 300
 
-                # Press I to become INVISIBLE!
-                if event.key == pygame.K_i:
+                if kb.activate_invisible:
                     if abilities.ability_unlocked[4] and abilities.invisible_timer <= 0:
-                        abilities.invisible_timer = 300  # 5 seconds
+                        abilities.invisible_timer = 300
 
-                # Press G to become GIANT!
-                if event.key == pygame.K_g:
+                if kb.activate_giant:
                     if abilities.ability_unlocked[5] and abilities.giant_timer <= 0:
-                        abilities.giant_timer = 480  # 8 seconds
+                        abilities.giant_timer = 480
 
-                # Press B to BOUNCE over buildings!
-                if event.key == pygame.K_b:
+                if kb.activate_bounce:
                     if (
                         abilities.ability_unlocked[6]
                         and abilities.bounce_timer <= 0
                         and abilities.bounce_cooldown <= 0
+                        and inside_building is None
                     ):
-                        if inside_building is None:  # can't bounce indoors!
-                            abilities.bounce_timer = BOUNCE_DURATION
-                            abilities.bounce_cooldown = 60  # 1 second cooldown
+                        abilities.bounce_timer = BOUNCE_DURATION
+                        abilities.bounce_cooldown = 60
 
-                # Press T to TELEPORT forward!
-                if event.key == pygame.K_t:
-                    if abilities.ability_unlocked[7] and abilities.teleport_cooldown <= 0:
-                        if inside_building is None:  # can't teleport indoors!
-                            # Teleport in the direction the burrb is facing
-                            tp_x = burrb_x + math.cos(burrb_angle) * TELEPORT_DISTANCE
-                            tp_y = burrb_y + math.sin(burrb_angle) * TELEPORT_DISTANCE
-                            # Clamp to world boundaries
-                            tp_x = max(30, min(WORLD_WIDTH - 30, tp_x))
-                            tp_y = max(30, min(WORLD_HEIGHT - 30, tp_y))
-                            # If we'd land inside a building, scoot to the nearest open spot
-                            if not can_move_to(tp_x, tp_y):
-                                # Try shorter distances until we find open ground
-                                for shrink in range(1, 10):
-                                    shorter = TELEPORT_DISTANCE * (1.0 - shrink * 0.1)
-                                    test_x = burrb_x + math.cos(burrb_angle) * shorter
-                                    test_y = burrb_y + math.sin(burrb_angle) * shorter
-                                    test_x = max(30, min(WORLD_WIDTH - 30, test_x))
-                                    test_y = max(30, min(WORLD_HEIGHT - 30, test_y))
-                                    if can_move_to(test_x, test_y):
-                                        tp_x = test_x
-                                        tp_y = test_y
-                                        break
-                                else:
-                                    tp_x = burrb_x  # can't teleport, stay put
-                                    tp_y = burrb_y
-                            burrb_x = tp_x
-                            burrb_y = tp_y
-                            abilities.teleport_cooldown = 90  # 1.5 second cooldown
-                            abilities.teleport_flash = 15  # flash effect for 0.25 seconds
+                if kb.activate_teleport:
+                    if (
+                        abilities.ability_unlocked[7]
+                        and abilities.teleport_cooldown <= 0
+                        and inside_building is None
+                    ):
+                        tp_x = burrb_x + math.cos(burrb_angle) * TELEPORT_DISTANCE
+                        tp_y = burrb_y + math.sin(burrb_angle) * TELEPORT_DISTANCE
+                        tp_x = max(30, min(WORLD_WIDTH - 30, tp_x))
+                        tp_y = max(30, min(WORLD_HEIGHT - 30, tp_y))
+                        if not can_move_to(tp_x, tp_y):
+                            for shrink in range(1, 10):
+                                shorter = TELEPORT_DISTANCE * (1.0 - shrink * 0.1)
+                                test_x = burrb_x + math.cos(burrb_angle) * shorter
+                                test_y = burrb_y + math.sin(burrb_angle) * shorter
+                                test_x = max(30, min(WORLD_WIDTH - 30, test_x))
+                                test_y = max(30, min(WORLD_HEIGHT - 30, test_y))
+                                if can_move_to(test_x, test_y):
+                                    tp_x = test_x
+                                    tp_y = test_y
+                                    break
+                            else:
+                                tp_x = burrb_x
+                                tp_y = burrb_y
+                        burrb_x = tp_x
+                        burrb_y = tp_y
+                        abilities.teleport_cooldown = 90
+                        abilities.teleport_flash = 15
 
-                # Press Q for EARTHQUAKE!
-                if event.key == pygame.K_q:
+                if kb.activate_earthquake:
                     if (
                         abilities.ability_unlocked[8]
                         and abilities.earthquake_timer <= 0
                         and abilities.earthquake_cooldown <= 0
+                        and inside_building is None
                     ):
-                        if inside_building is None:  # can't earthquake indoors!
-                            abilities.earthquake_timer = EARTHQUAKE_DURATION
-                            abilities.earthquake_cooldown = 360  # 6 second cooldown
-                            abilities.earthquake_shake = 30  # screen shakes for 0.5 seconds
-                            # Stun all NPCs in range - flip their direction and slow them
-                            for npc in npcs:
-                                if npc.npc_type == "rock":
-                                    continue
-                                eq_dx = npc.x - burrb_x
-                                eq_dy = npc.y - burrb_y
-                                eq_dist = math.sqrt(eq_dx * eq_dx + eq_dy * eq_dy)
-                                if eq_dist < EARTHQUAKE_RADIUS:
-                                    # Push them away from the burrb!
-                                    if eq_dist > 1:
-                                        push_x = (eq_dx / eq_dist) * 20
-                                        push_y = (eq_dy / eq_dist) * 20
-                                        npc.x += push_x
-                                        npc.y += push_y
-                                    npc.dir_timer = EARTHQUAKE_DURATION  # stunned
-                                    npc.speed = 0.0  # frozen in place
-                            # Also stun nearby cars!
-                            for car in cars:
-                                eq_dx = car.x - burrb_x
-                                eq_dy = car.y - burrb_y
-                                eq_dist = math.sqrt(eq_dx * eq_dx + eq_dy * eq_dy)
-                                if eq_dist < EARTHQUAKE_RADIUS:
-                                    car.speed = 0.0  # cars stop
+                        abilities.earthquake_timer = EARTHQUAKE_DURATION
+                        abilities.earthquake_cooldown = 360
+                        abilities.earthquake_shake = 30
+                        for npc in npcs:
+                            if npc.npc_type == "rock":
+                                continue
+                            eq_dx = npc.x - burrb_x
+                            eq_dy = npc.y - burrb_y
+                            eq_dist = math.sqrt(eq_dx * eq_dx + eq_dy * eq_dy)
+                            if eq_dist < EARTHQUAKE_RADIUS:
+                                if eq_dist > 1:
+                                    npc.x += (eq_dx / eq_dist) * 20
+                                    npc.y += (eq_dy / eq_dist) * 20
+                                npc.dir_timer = EARTHQUAKE_DURATION
+                                npc.speed = 0.0
+                        for car in cars:
+                            eq_dx = car.x - burrb_x
+                            eq_dy = car.y - burrb_y
+                            eq_dist = math.sqrt(eq_dx * eq_dx + eq_dy * eq_dy)
+                            if eq_dist < EARTHQUAKE_RADIUS:
+                                car.speed = 0.0
 
-                # === BIOME ABILITIES ===
-
-                # Press V for VINE TRAP! (Forest - index 0)
-                if event.key == pygame.K_v:
+                if kb.activate_vine_trap:
                     if (
                         abilities.biome_ability_unlocked[0]
                         and abilities.vine_trap_timer <= 0
                         and abilities.vine_trap_cooldown <= 0
+                        and inside_building is None
                     ):
-                        if inside_building is None:
-                            abilities.vine_trap_timer = VINE_TRAP_DURATION
-                            abilities.vine_trap_cooldown = 300  # 5 sec cooldown
-                            # Trap all NPCs in range!
-                            for npc in npcs:
-                                if npc.npc_type == "rock":
-                                    continue
-                                vd = math.sqrt(
-                                    (npc.x - burrb_x) ** 2 + (npc.y - burrb_y) ** 2
-                                )
-                                if vd < VINE_TRAP_RADIUS:
-                                    npc.speed = 0.0
-                                    npc.dir_timer = VINE_TRAP_DURATION
+                        abilities.vine_trap_timer = VINE_TRAP_DURATION
+                        abilities.vine_trap_cooldown = 300
+                        for npc in npcs:
+                            if npc.npc_type == "rock":
+                                continue
+                            vd = math.sqrt(
+                                (npc.x - burrb_x) ** 2 + (npc.y - burrb_y) ** 2
+                            )
+                            if vd < VINE_TRAP_RADIUS:
+                                npc.speed = 0.0
+                                npc.dir_timer = VINE_TRAP_DURATION
 
-                # Press C for CAMOUFLAGE! (Forest - index 1)
-                if event.key == pygame.K_c:
-                    if abilities.biome_ability_unlocked[1] and abilities.camouflage_timer <= 0:
+                if kb.activate_camouflage:
+                    if (
+                        abilities.biome_ability_unlocked[1]
+                        and abilities.camouflage_timer <= 0
+                    ):
                         abilities.camouflage_timer = CAMOUFLAGE_DURATION
 
-                # Press H for NATURE HEAL! (Forest - index 2)
-                if event.key == pygame.K_h:
+                if kb.activate_nature_heal:
                     if (
                         abilities.biome_ability_unlocked[2]
                         and abilities.nature_heal_timer <= 0
                         and abilities.nature_heal_cooldown <= 0
+                        and inside_building is None
                     ):
-                        if inside_building is None:
-                            abilities.nature_heal_timer = 30  # brief push effect
-                            abilities.nature_heal_cooldown = 300
-                            # Push all nearby NPCs away hard!
-                            for npc in npcs:
-                                if npc.npc_type == "rock":
-                                    continue
-                                hd = math.sqrt(
-                                    (npc.x - burrb_x) ** 2 + (npc.y - burrb_y) ** 2
-                                )
-                                if hd < NATURE_HEAL_RADIUS and hd > 1:
-                                    push_str = 40
-                                    npc.x += ((npc.x - burrb_x) / hd) * push_str
-                                    npc.y += ((npc.y - burrb_y) / hd) * push_str
+                        abilities.nature_heal_timer = 30
+                        abilities.nature_heal_cooldown = 300
+                        for npc in npcs:
+                            if npc.npc_type == "rock":
+                                continue
+                            hd = math.sqrt(
+                                (npc.x - burrb_x) ** 2 + (npc.y - burrb_y) ** 2
+                            )
+                            if hd < NATURE_HEAL_RADIUS and hd > 1:
+                                npc.x += ((npc.x - burrb_x) / hd) * 40
+                                npc.y += ((npc.y - burrb_y) / hd) * 40
 
-                # Press N for SANDSTORM! (Desert - index 3)
-                if event.key == pygame.K_n:
+                if kb.activate_sandstorm:
                     if (
                         abilities.biome_ability_unlocked[3]
                         and abilities.sandstorm_timer <= 0
                         and abilities.sandstorm_cooldown <= 0
+                        and inside_building is None
                     ):
-                        if inside_building is None:
-                            abilities.sandstorm_timer = SANDSTORM_DURATION
-                            abilities.sandstorm_cooldown = 360
-                            # Slow + confuse all NPCs in range
-                            for npc in npcs:
-                                if npc.npc_type == "rock":
-                                    continue
-                                sd = math.sqrt(
-                                    (npc.x - burrb_x) ** 2 + (npc.y - burrb_y) ** 2
-                                )
-                                if sd < SANDSTORM_RADIUS:
-                                    npc.speed = 0.3
-                                    npc.dir_timer = SANDSTORM_DURATION
+                        abilities.sandstorm_timer = SANDSTORM_DURATION
+                        abilities.sandstorm_cooldown = 360
+                        for npc in npcs:
+                            if npc.npc_type == "rock":
+                                continue
+                            sd = math.sqrt(
+                                (npc.x - burrb_x) ** 2 + (npc.y - burrb_y) ** 2
+                            )
+                            if sd < SANDSTORM_RADIUS:
+                                npc.speed = 0.3
+                                npc.dir_timer = SANDSTORM_DURATION
 
-                # Press M for MAGNET! (Desert - index 4)
-                if event.key == pygame.K_m:
+                if kb.activate_magnet:
                     if (
                         abilities.biome_ability_unlocked[4]
                         and abilities.magnet_timer <= 0
@@ -883,58 +764,55 @@ async def main():
                         abilities.magnet_timer = MAGNET_DURATION
                         abilities.magnet_cooldown = 360
 
-                # Press R for FIRE DASH! (Desert - index 5)
-                if event.key == pygame.K_r:
+                if kb.activate_fire_dash:
                     if (
                         abilities.biome_ability_unlocked[5]
                         and abilities.fire_dash_active <= 0
                         and abilities.fire_dash_cooldown <= 0
+                        and inside_building is None
                     ):
-                        if inside_building is None:
-                            abilities.fire_dash_active = 20  # quick burst
-                            abilities.fire_dash_cooldown = 90
+                        abilities.fire_dash_active = 20
+                        abilities.fire_dash_cooldown = 90
 
-                # Press L for ICE WALL! (Snow - index 6)
-                if event.key == pygame.K_l:
-                    if abilities.biome_ability_unlocked[6] and abilities.ice_wall_cooldown <= 0:
-                        if inside_building is None:
-                            abilities.ice_wall_cooldown = 180  # 3 sec cooldown
-                            # Place ice wall segments perpendicular to facing direction
-                            perp = burrb_angle + math.pi / 2
-                            wall_dist = 40  # how far in front
-                            cx = burrb_x + math.cos(burrb_angle) * wall_dist
-                            cy = burrb_y + math.sin(burrb_angle) * wall_dist
-                            for seg in range(-2, 3):
-                                wx = cx + math.cos(perp) * seg * 25
-                                wy = cy + math.sin(perp) * seg * 25
-                                abilities.ice_walls.append([wx, wy, 480])  # lasts 8 seconds
+                if kb.activate_ice_wall:
+                    if (
+                        abilities.biome_ability_unlocked[6]
+                        and abilities.ice_wall_cooldown <= 0
+                        and inside_building is None
+                    ):
+                        abilities.ice_wall_cooldown = 180
+                        perp = burrb_angle + math.pi / 2
+                        wall_dist = 40
+                        cx = burrb_x + math.cos(burrb_angle) * wall_dist
+                        cy = burrb_y + math.sin(burrb_angle) * wall_dist
+                        for seg in range(-2, 3):
+                            wx = cx + math.cos(perp) * seg * 25
+                            wy = cy + math.sin(perp) * seg * 25
+                            abilities.ice_walls.append([wx, wy, 480])
 
-                # Press Z for BLIZZARD! (Snow - index 7)
-                if event.key == pygame.K_z:
+                if kb.activate_blizzard:
                     if (
                         abilities.biome_ability_unlocked[7]
                         and abilities.blizzard_timer <= 0
                         and abilities.blizzard_cooldown <= 0
+                        and inside_building is None
                     ):
-                        if inside_building is None:
-                            abilities.blizzard_timer = BLIZZARD_DURATION
-                            abilities.blizzard_cooldown = 360
-                            # Freeze AND push all NPCs in range
-                            for npc in npcs:
-                                if npc.npc_type == "rock":
-                                    continue
-                                bd = math.sqrt(
-                                    (npc.x - burrb_x) ** 2 + (npc.y - burrb_y) ** 2
-                                )
-                                if bd < BLIZZARD_RADIUS:
-                                    npc.speed = 0.0
-                                    npc.dir_timer = BLIZZARD_DURATION
-                                    if bd > 1:
-                                        npc.x += ((npc.x - burrb_x) / bd) * 25
-                                        npc.y += ((npc.y - burrb_y) / bd) * 25
+                        abilities.blizzard_timer = BLIZZARD_DURATION
+                        abilities.blizzard_cooldown = 360
+                        for npc in npcs:
+                            if npc.npc_type == "rock":
+                                continue
+                            bd = math.sqrt(
+                                (npc.x - burrb_x) ** 2 + (npc.y - burrb_y) ** 2
+                            )
+                            if bd < BLIZZARD_RADIUS:
+                                npc.speed = 0.0
+                                npc.dir_timer = BLIZZARD_DURATION
+                                if bd > 1:
+                                    npc.x += ((npc.x - burrb_x) / bd) * 25
+                                    npc.y += ((npc.y - burrb_y) / bd) * 25
 
-                # Press X for SNOW CLOAK! (Snow - index 8)
-                if event.key == pygame.K_x:
+                if kb.activate_snow_cloak:
                     if (
                         abilities.biome_ability_unlocked[8]
                         and abilities.snow_cloak_timer <= 0
@@ -943,255 +821,97 @@ async def main():
                         abilities.snow_cloak_timer = SNOW_CLOAK_DURATION
                         abilities.snow_cloak_cooldown = 360
 
-                # Press P for POISON CLOUD! (Swamp - index 9)
-                if event.key == pygame.K_p:
-                    if abilities.biome_ability_unlocked[9] and abilities.poison_cooldown <= 0:
-                        if inside_building is None:
-                            abilities.poison_cooldown = 240
-                            abilities.poison_clouds.append(
-                                [burrb_x, burrb_y, POISON_CLOUD_DURATION]
-                            )
+                if kb.activate_poison_cloud:
+                    if (
+                        abilities.biome_ability_unlocked[9]
+                        and abilities.poison_cooldown <= 0
+                        and inside_building is None
+                    ):
+                        abilities.poison_cooldown = 240
+                        abilities.poison_clouds.append(
+                            [burrb_x, burrb_y, POISON_CLOUD_DURATION]
+                        )
 
-                # Press J for SHADOW STEP! (Swamp - index 10)
-                if event.key == pygame.K_j:
-                    if abilities.biome_ability_unlocked[10] and abilities.shadow_step_cooldown <= 0:
-                        if inside_building is None:
-                            abilities.shadow_step_cooldown = 120  # 2 sec cooldown
-                            # Find nearest tree or dead_tree or building to teleport to
-                            best_dist = 999999
-                            best_x, best_y = burrb_x, burrb_y
-                            # Check biome objects (trees, dead trees, etc.)
-                            for ox, oy, okind, osize in biome_objects:
-                                if okind in ("dead_tree", "snow_tree", "cactus"):
-                                    sd = math.sqrt(
-                                        (ox - burrb_x) ** 2 + (oy - burrb_y) ** 2
-                                    )
-                                    if 50 < sd < 500 and sd < best_dist:
-                                        best_dist = sd
-                                        best_x = ox + 20
-                                        best_y = oy + 20
-                            for tx, ty, tsize in trees:
+                if kb.activate_shadow_step:
+                    if (
+                        abilities.biome_ability_unlocked[10]
+                        and abilities.shadow_step_cooldown <= 0
+                        and inside_building is None
+                    ):
+                        abilities.shadow_step_cooldown = 120
+                        best_dist = 999999
+                        best_x, best_y = burrb_x, burrb_y
+                        for ox, oy, okind, osize in biome_objects:
+                            if okind in ("dead_tree", "snow_tree", "cactus"):
                                 sd = math.sqrt(
-                                    (tx - burrb_x) ** 2 + (ty - burrb_y) ** 2
+                                    (ox - burrb_x) ** 2 + (oy - burrb_y) ** 2
                                 )
                                 if 50 < sd < 500 and sd < best_dist:
                                     best_dist = sd
-                                    best_x = tx + 20
-                                    best_y = ty + 20
-                            if best_dist < 999999:
-                                burrb_x = best_x
-                                burrb_y = best_y
-                                abilities.teleport_flash = 15  # reuse the flash effect
+                                    best_x = ox + 20
+                                    best_y = oy + 20
+                        for tx, ty, tsize in trees:
+                            sd = math.sqrt((tx - burrb_x) ** 2 + (ty - burrb_y) ** 2)
+                            if 50 < sd < 500 and sd < best_dist:
+                                best_dist = sd
+                                best_x = tx + 20
+                                best_y = ty + 20
+                        if best_dist < 999999:
+                            burrb_x = best_x
+                            burrb_y = best_y
+                            abilities.teleport_flash = 15
 
-                # Press 1 for SODA CAN MONSTERS! (free ability - no purchase needed!)
-                if event.key == pygame.K_1:
-                    if len(abilities.soda_cans) == 0 and abilities.soda_can_cooldown <= 0:
-                        if inside_building is None:
-                            # Spawn 3 mini soda cans around the player!
-                            for i in range(3):
-                                angle = i * (2 * math.pi / 3)  # spread evenly
-                                sx = burrb_x + math.cos(angle) * 25
-                                sy = burrb_y + math.sin(angle) * 25
-                                abilities.soda_cans.append(
-                                    {
-                                        "x": sx,
-                                        "y": sy,
-                                        "timer": SODA_CAN_DURATION,
-                                        "walk": 0,
-                                        "attack_cd": 0,
-                                    }
-                                )
-                            abilities.soda_can_cooldown = SODA_CAN_COOLDOWN_TIME
-
-                # Press K for SWAMP MONSTER! (Swamp - index 11)
-                if event.key == pygame.K_k:
-                    if abilities.biome_ability_unlocked[11] and not abilities.swamp_monster_active:
-                        if inside_building is None:
-                            abilities.swamp_monster_active = True
-                            abilities.swamp_monster_x = burrb_x + 30
-                            abilities.swamp_monster_y = burrb_y + 30
-                            abilities.swamp_monster_timer = SWAMP_MONSTER_DURATION
-                            abilities.swamp_monster_walk = 0
-
-            # === TOUCH / MOUSE INPUT ===
-            # Handle finger touch events (phones/tablets) AND mouse clicks
-            # (touchscreen laptops report mouse events for touch)
-            if event.type == pygame.FINGERDOWN:
-                touch_active = True
-                tx = int(event.x * SCREEN_WIDTH)
-                ty = int(event.y * SCREEN_HEIGHT)
-                touch_held = True
-                touch_pos = (tx, ty)
-                touch_start_pos = (tx, ty)
-                touch_finger_id = event.finger_id
-
-                # Check if a button was pressed
-                btn = touch_hit_button(tx, ty)
-                if btn is not None:
-                    touch_btn_pressed = btn
-                else:
-                    touch_btn_pressed = None
-                    # Tap to move! Convert screen position to world/interior position
-                    if not shop_open:
-                        if inside_building is not None:
-                            # Inside a building: figure out interior coords from screen
-                            bld = inside_building
-                            tile = bld.interior_tile
-                            # Top-down interior: screen is centered on burrb
-                            icam_x = interior_x - SCREEN_WIDTH // 2
-                            icam_y = interior_y - SCREEN_HEIGHT // 2
-                            touch_move_target = (tx + icam_x, ty + icam_y)
-                        else:
-                            # Top-down outdoor: convert screen coords to world coords
-                            touch_move_target = (tx + cam_x, ty + cam_y)
-
-            if event.type == pygame.FINGERMOTION:
-                if event.finger_id == touch_finger_id:
-                    tx = int(event.x * SCREEN_WIDTH)
-                    ty = int(event.y * SCREEN_HEIGHT)
-                    touch_pos = (tx, ty)
-
-            if event.type == pygame.FINGERUP:
-                if event.finger_id == touch_finger_id:
-                    tx = int(event.x * SCREEN_WIDTH)
-                    ty = int(event.y * SCREEN_HEIGHT)
-
-                    # If a button was pressed, trigger its action on release
-                    if touch_btn_pressed is not None:
-                        btn = touch_hit_button(tx, ty)
-                        if btn == touch_btn_pressed:
-                            # Trigger the button action!
-                            if btn == "action_e":
-                                # Simulate pressing E
-                                fake_event = pygame.event.Event(
-                                    pygame.KEYDOWN, key=pygame.K_e
-                                )
-                                pygame.event.post(fake_event)
-                            elif btn == "action_o":
-                                fake_event = pygame.event.Event(
-                                    pygame.KEYDOWN, key=pygame.K_o
-                                )
-                                pygame.event.post(fake_event)
-                            elif btn == "toggle_shop":
-                                fake_event = pygame.event.Event(
-                                    pygame.KEYDOWN, key=pygame.K_TAB
-                                )
-                                pygame.event.post(fake_event)
-                            elif btn == "ability_f":
-                                fake_event = pygame.event.Event(
-                                    pygame.KEYDOWN, key=pygame.K_f
-                                )
-                                pygame.event.post(fake_event)
-                            elif btn == "ability_i":
-                                fake_event = pygame.event.Event(
-                                    pygame.KEYDOWN, key=pygame.K_i
-                                )
-                                pygame.event.post(fake_event)
-                            elif btn == "ability_g":
-                                fake_event = pygame.event.Event(
-                                    pygame.KEYDOWN, key=pygame.K_g
-                                )
-                                pygame.event.post(fake_event)
-                            elif btn == "ability_b":
-                                fake_event = pygame.event.Event(
-                                    pygame.KEYDOWN, key=pygame.K_b
-                                )
-                                pygame.event.post(fake_event)
-                            elif btn == "ability_t":
-                                fake_event = pygame.event.Event(
-                                    pygame.KEYDOWN, key=pygame.K_t
-                                )
-                                pygame.event.post(fake_event)
-                            elif btn == "ability_q":
-                                fake_event = pygame.event.Event(
-                                    pygame.KEYDOWN, key=pygame.K_q
-                                )
-                                pygame.event.post(fake_event)
-                            elif btn == "unstuck":
-                                fake_event = pygame.event.Event(
-                                    pygame.KEYDOWN, key=pygame.K_u
-                                )
-                                pygame.event.post(fake_event)
-
-                    touch_held = False
-                    touch_btn_pressed = None
-                    touch_finger_id = None
-
-            # Also handle mouse clicks as touch (for touchscreen laptops)
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                touch_active = True
-                tx, ty = event.pos
-                touch_held = True
-                touch_pos = (tx, ty)
-                touch_start_pos = (tx, ty)
-
-                btn = touch_hit_button(tx, ty)
-                if btn is not None:
-                    touch_btn_pressed = btn
-                else:
-                    touch_btn_pressed = None
-                    if not shop_open:
-                        if inside_building is not None:
-                            icam_x = interior_x - SCREEN_WIDTH // 2
-                            icam_y = interior_y - SCREEN_HEIGHT // 2
-                            touch_move_target = (tx + icam_x, ty + icam_y)
-                        else:
-                            touch_move_target = (tx + cam_x, ty + cam_y)
-
-            if event.type == pygame.MOUSEMOTION and touch_held:
-                touch_pos = event.pos
-
-            if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-                tx, ty = event.pos
-                if touch_btn_pressed is not None:
-                    btn = touch_hit_button(tx, ty)
-                    if btn == touch_btn_pressed:
-                        if btn == "action_e":
-                            pygame.event.post(
-                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_e)
+                if kb.activate_soda_cans:
+                    if (
+                        len(abilities.soda_cans) == 0
+                        and abilities.soda_can_cooldown <= 0
+                        and inside_building is None
+                    ):
+                        for i in range(3):
+                            angle = i * (2 * math.pi / 3)
+                            sx = burrb_x + math.cos(angle) * 25
+                            sy = burrb_y + math.sin(angle) * 25
+                            abilities.soda_cans.append(
+                                {
+                                    "x": sx,
+                                    "y": sy,
+                                    "timer": SODA_CAN_DURATION,
+                                    "walk": 0,
+                                    "attack_cd": 0,
+                                }
                             )
-                        elif btn == "action_o":
-                            pygame.event.post(
-                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_o)
-                            )
-                        elif btn == "toggle_shop":
-                            pygame.event.post(
-                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_TAB)
-                            )
-                        elif btn == "ability_f":
-                            pygame.event.post(
-                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_f)
-                            )
-                        elif btn == "ability_i":
-                            pygame.event.post(
-                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_i)
-                            )
-                        elif btn == "ability_g":
-                            pygame.event.post(
-                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_g)
-                            )
-                        elif btn == "ability_b":
-                            pygame.event.post(
-                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_b)
-                            )
-                        elif btn == "ability_t":
-                            pygame.event.post(
-                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_t)
-                            )
-                        elif btn == "ability_q":
-                            pygame.event.post(
-                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_q)
-                            )
-                        elif btn == "unstuck":
-                            pygame.event.post(
-                                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_u)
-                            )
-                touch_held = False
-                touch_btn_pressed = None
+                        abilities.soda_can_cooldown = SODA_CAN_COOLDOWN_TIME
+
+                if kb.activate_swamp_monster:
+                    if (
+                        abilities.biome_ability_unlocked[11]
+                        and not abilities.swamp_monster_active
+                        and inside_building is None
+                    ):
+                        abilities.swamp_monster_active = True
+                        abilities.swamp_monster_x = burrb_x + 30
+                        abilities.swamp_monster_y = burrb_y + 30
+                        abilities.swamp_monster_timer = SWAMP_MONSTER_DURATION
+                        abilities.swamp_monster_walk = 0
+
+            # === TOUCH / MOUSE INPUT (Phase 6: delegated to src/input/touch.py) ===
+            simulated_keys = handle_touch_event(
+                event,
+                touch,
+                abilities.ability_unlocked,
+                inside_building,
+                interior_x,
+                interior_y,
+                cam_x,
+                cam_y,
+                shop_open,
+            )
+            for key in simulated_keys:
+                pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=key))
 
         # Handle touch input for the shop (tap abilities to select/buy)
-        if shop_open and touch_active and touch_held:
-            tx, ty = touch_pos
+        if shop_open and touch.touch_active and touch.touch_held:
+            tx, ty = touch.touch_pos
             tab_abs, tab_cur, tab_name, _, _, _, tab_unlock, tab_indices = (
                 get_shop_tab_info(
                     shop_tab,
@@ -1219,7 +939,7 @@ async def main():
                     if ttx <= tx <= ttx + tab_w:
                         shop_tab = ti
                         shop_cursor = 0
-                        touch_held = False
+                        touch.touch_held = False
                         break
             # Check if tap is on an ability row
             elif box_x <= tx <= box_x + box_w:
@@ -1230,7 +950,10 @@ async def main():
                             # Already selected - try to buy!
                             if shop_tab == 0:
                                 cost = ABILITIES[i][1]
-                                if not abilities.ability_unlocked[i] and chips_collected >= cost:
+                                if (
+                                    not abilities.ability_unlocked[i]
+                                    and chips_collected >= cost
+                                ):
                                     chips_collected -= cost
                                     abilities.ability_unlocked[i] = True
                             else:
@@ -1251,8 +974,9 @@ async def main():
                                     abilities.biome_ability_unlocked[real_idx] = True
                         else:
                             shop_cursor = i
-                        touch_held = False
+                        touch.touch_held = False
                         break
+
 
         # Skip movement and updates when shop is open (game is paused)
         if shop_open:
@@ -1270,8 +994,9 @@ async def main():
                 snowflakes_collected,
                 mushrooms_collected,
             )
-            if touch_active:
-                draw_touch_buttons(screen)
+            if touch.touch_active:
+                _draw_touch_buttons(screen, touch, abilities.ability_unlocked,
+                                    inside_building, interior_x, interior_y, cam_x, cam_y)
             pygame.display.flip()
             clock.tick(FPS)
             await asyncio.sleep(0)
@@ -1456,7 +1181,8 @@ async def main():
                     if npc.npc_type == "rock":
                         continue
                     md = math.sqrt(
-                        (npc.x - abilities.swamp_monster_x) ** 2 + (npc.y - abilities.swamp_monster_y) ** 2
+                        (npc.x - abilities.swamp_monster_x) ** 2
+                        + (npc.y - abilities.swamp_monster_y) ** 2
                     )
                     if md < nearest_dist:
                         nearest_dist = md
@@ -1472,8 +1198,12 @@ async def main():
                         ) * SWAMP_MONSTER_SPEED
                     # Push NPC away on contact
                     if md < 20 and md > 1:
-                        nearest_npc.x += ((nearest_npc.x - abilities.swamp_monster_x) / md) * 8
-                        nearest_npc.y += ((nearest_npc.y - abilities.swamp_monster_y) / md) * 8
+                        nearest_npc.x += (
+                            (nearest_npc.x - abilities.swamp_monster_x) / md
+                        ) * 8
+                        nearest_npc.y += (
+                            (nearest_npc.y - abilities.swamp_monster_y) / md
+                        ) * 8
                 else:
                     # No NPC nearby, follow the burrb
                     fd = math.sqrt(
@@ -1549,13 +1279,21 @@ async def main():
         # Dash activates when SHIFT is pressed and we have the dash ability
         if abilities.ability_unlocked[0] and not abilities.ability_unlocked[1]:
             # Only dash if super speed is NOT unlocked (otherwise SHIFT = super speed)
-            if keys[pygame.K_LSHIFT] and abilities.dash_cooldown <= 0 and abilities.dash_active <= 0:
+            if (
+                keys[pygame.K_LSHIFT]
+                and abilities.dash_cooldown <= 0
+                and abilities.dash_active <= 0
+            ):
                 abilities.dash_active = 12  # 12 frames of dash burst
                 abilities.dash_cooldown = 45  # cooldown before next dash
         # If BOTH dash and super speed are unlocked, SHIFT = super speed,
         # and dash triggers automatically when you start running fast
         if abilities.ability_unlocked[0] and abilities.ability_unlocked[1]:
-            if keys[pygame.K_LSHIFT] and abilities.dash_cooldown <= 0 and abilities.dash_active <= 0:
+            if (
+                keys[pygame.K_LSHIFT]
+                and abilities.dash_cooldown <= 0
+                and abilities.dash_active <= 0
+            ):
                 abilities.dash_active = 12
                 abilities.dash_cooldown = 45
         if abilities.dash_active > 0:
@@ -1585,7 +1323,7 @@ async def main():
                 pygame.K_s,
             )
         ):
-            touch_move_target = None
+            touch.touch_move_target = None
 
         # TOP-DOWN CONTROLS:
         # Arrow keys / WASD move in that direction directly
@@ -1611,8 +1349,8 @@ async def main():
 
         # --- TOUCH MOVEMENT ---
         # If no keyboard input and we have a touch move target, walk toward it!
-        if dx == 0 and dy == 0 and touch_move_target is not None and touch_active:
-            target_x, target_y = touch_move_target
+        if dx == 0 and dy == 0 and touch.touch_move_target is not None and touch.touch_active:
+            target_x, target_y = touch.touch_move_target
             if inside_building is not None:
                 # Moving inside a building
                 tmx = target_x - interior_x
@@ -1631,7 +1369,7 @@ async def main():
                 burrb_angle = math.atan2(dy, dx)
             else:
                 # Arrived at target!
-                touch_move_target = None
+                touch.touch_move_target = None
 
         # Try to move (check collisions)!
         is_walking = dx != 0 or dy != 0
@@ -1835,7 +1573,9 @@ async def main():
         # then retracts back. If it hits an NPC, it hurts them!
         # Hit them 3 times to knock them out.
         # Mega Tongue ability doubles the range!
-        effective_tongue_max = tongue_max_length * (2.0 if abilities.ability_unlocked[2] else 1.0)
+        effective_tongue_max = tongue_max_length * (
+            2.0 if abilities.ability_unlocked[2] else 1.0
+        )
         if tongue_active:
             if not tongue_retracting:
                 # Tongue is shooting outward
@@ -1957,7 +1697,13 @@ async def main():
 
             # Bounce: draw a shadow on the ground when airborne!
             draw_bounce_shadow(
-                screen, burrb_x, burrb_y, cam_x, cam_y, abilities.bounce_timer, abilities.bounce_height
+                screen,
+                burrb_x,
+                burrb_y,
+                cam_x,
+                cam_y,
+                abilities.bounce_timer,
+                abilities.bounce_height,
             )
 
             # Bounce height offset for drawing the burrb
@@ -2005,12 +1751,20 @@ async def main():
                 )
 
             # --- ABILITY VISUAL EFFECTS (src/rendering/effects.py) ---
-            draw_teleport_flash(screen, burrb_x, burrb_y, cam_x, cam_y, abilities.teleport_flash)
+            draw_teleport_flash(
+                screen, burrb_x, burrb_y, cam_x, cam_y, abilities.teleport_flash
+            )
             draw_earthquake_shockwave(
                 screen, burrb_x, burrb_y, cam_x, cam_y, abilities.earthquake_shake
             )
             draw_dash_trail(
-                screen, burrb_x, burrb_y, cam_x, cam_y, burrb_angle, abilities.dash_active
+                screen,
+                burrb_x,
+                burrb_y,
+                cam_x,
+                cam_y,
+                burrb_angle,
+                abilities.dash_active,
             )
             draw_vine_trap(screen, cam_x, cam_y, npcs, abilities.vine_trap_timer)
             draw_camouflage(
@@ -2022,8 +1776,12 @@ async def main():
                 bounce_y_offset,
                 abilities.camouflage_timer,
             )
-            draw_nature_heal(screen, burrb_x, burrb_y, cam_x, cam_y, abilities.nature_heal_timer)
-            draw_sandstorm(screen, burrb_x, burrb_y, cam_x, cam_y, abilities.sandstorm_timer)
+            draw_nature_heal(
+                screen, burrb_x, burrb_y, cam_x, cam_y, abilities.nature_heal_timer
+            )
+            draw_sandstorm(
+                screen, burrb_x, burrb_y, cam_x, cam_y, abilities.sandstorm_timer
+            )
             draw_magnet(
                 screen,
                 burrb_x,
@@ -2036,10 +1794,18 @@ async def main():
             )
             draw_fire_trail(screen, cam_x, cam_y, abilities.fire_trail)
             draw_fire_dash_trail(
-                screen, burrb_x, burrb_y, cam_x, cam_y, burrb_angle, abilities.fire_dash_active
+                screen,
+                burrb_x,
+                burrb_y,
+                cam_x,
+                cam_y,
+                burrb_angle,
+                abilities.fire_dash_active,
             )
             draw_ice_walls(screen, cam_x, cam_y, abilities.ice_walls)
-            draw_blizzard(screen, burrb_x, burrb_y, cam_x, cam_y, abilities.blizzard_timer)
+            draw_blizzard(
+                screen, burrb_x, burrb_y, cam_x, cam_y, abilities.blizzard_timer
+            )
             draw_snow_cloak(
                 screen,
                 burrb_x,
@@ -2049,7 +1815,9 @@ async def main():
                 bounce_y_offset,
                 abilities.snow_cloak_timer,
             )
-            draw_poison_clouds(screen, cam_x, cam_y, abilities.poison_clouds, POISON_CLOUD_RADIUS)
+            draw_poison_clouds(
+                screen, cam_x, cam_y, abilities.poison_clouds, POISON_CLOUD_RADIUS
+            )
             draw_swamp_monster(
                 screen,
                 cam_x,
@@ -2143,8 +1911,9 @@ async def main():
         draw_collect_message(screen, collect_msg_timer, collect_msg_text)
 
         # Draw touch buttons (only if touch has been used)
-        if touch_active:
-            draw_touch_buttons(screen)
+        if touch.touch_active:
+            _draw_touch_buttons(screen, touch, abilities.ability_unlocked,
+                                inside_building, interior_x, interior_y, cam_x, cam_y)
 
         # JUMP SCARE! Draw the scary birb on top of EVERYTHING!
         if jumpscare_timer > 0:

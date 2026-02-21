@@ -98,11 +98,11 @@ life-of-a-burrb/
 
 ## Phase 6: Input Handling
 
-- [ ] Create `src/input/` package with `__init__.py`
-- [ ] Create `src/input/keyboard.py` — extract keyboard event handling from main loop
-- [ ] Create `src/input/touch.py` — move touch state, button defs, hit testing, drawing, event handling
-- [ ] Verify game runs
-- [ ] Commit + push
+- [x] Create `src/input/` package with `__init__.py`
+- [x] Create `src/input/keyboard.py` — extract keyboard event handling from main loop
+- [x] Create `src/input/touch.py` — move touch state, button defs, hit testing, drawing, event handling
+- [x] Verify game runs
+- [x] Commit + push
 
 ## Phase 7: GameState + Main Loop Restructure
 
