@@ -9,120 +9,64 @@ import math
 import random
 import asyncio
 
+# --- Refactored imports (Phase 1) ---
+from src.constants import (
+    WHITE,
+    BLACK,
+    DARK_GRAY,
+    GRAY,
+    LIGHT_GRAY,
+    GREEN,
+    DARK_GREEN,
+    BROWN,
+    SKY_BLUE,
+    YELLOW,
+    SIDEWALK,
+    ROAD_COLOR,
+    ROAD_LINE,
+    BURRB_BLUE,
+    BURRB_LIGHT_BLUE,
+    BURRB_DARK_BLUE,
+    BURRB_ORANGE,
+    BURRB_EYE,
+    WORLD_WIDTH,
+    WORLD_HEIGHT,
+    BLOCK_SIZE,
+    ROAD_WIDTH,
+    SIDEWALK_WIDTH,
+)
+from src.settings import (
+    SCREEN_WIDTH,
+    SCREEN_HEIGHT,
+    FPS,
+    SPAWN_X,
+    SPAWN_Y,
+    SPAWN_SIZE,
+    SPAWN_RECT,
+)
+from src.biomes import (
+    BIOME_CITY,
+    BIOME_FOREST,
+    BIOME_DESERT,
+    BIOME_SNOW,
+    BIOME_SWAMP,
+    CITY_X1,
+    CITY_Y1,
+    CITY_X2,
+    CITY_Y2,
+    BIOME_COLORS,
+    get_biome,
+)
+
 # Initialize pygame - this starts up the game engine
 pygame.init()
 
-# Screen settings
-SCREEN_WIDTH = 900
-SCREEN_HEIGHT = 700
+# Screen setup
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 pygame.display.set_caption("Life of a Burrb")
 
 # Clock controls how fast the game runs (frames per second)
 clock = pygame.time.Clock()
-FPS = 60
-
-# Colors - these are (Red, Green, Blue) values from 0-255
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
-DARK_GRAY = (80, 80, 80)
-GRAY = (150, 150, 150)
-LIGHT_GRAY = (200, 200, 200)
-GREEN = (80, 180, 80)
-DARK_GREEN = (50, 140, 50)
-BROWN = (139, 90, 43)
-SKY_BLUE = (135, 200, 235)
-YELLOW = (255, 220, 50)
-SIDEWALK = (210, 200, 185)
-ROAD_COLOR = (60, 60, 60)
-ROAD_LINE = (220, 210, 50)
-
-# Burrb colors (matching the drawing!)
-BURRB_BLUE = (60, 150, 220)
-BURRB_LIGHT_BLUE = (100, 180, 240)
-BURRB_DARK_BLUE = (30, 100, 170)
-BURRB_ORANGE = (230, 160, 30)
-BURRB_EYE = (20, 40, 80)
-
-# ============================================================
-# WORLD MAP
-# ============================================================
-# The world is much bigger than the screen - that's what makes
-# it "open world"! The camera follows the burrb around.
-WORLD_WIDTH = 10000
-WORLD_HEIGHT = 10000
-
-# City grid settings
-BLOCK_SIZE = 200  # each city block is 200x200 pixels (smaller = denser city)
-ROAD_WIDTH = 70  # wider roads for more cement
-SIDEWALK_WIDTH = 24  # wider sidewalks
-
-# Spawn square - the burrb starts here, and nothing spawns inside it!
-# It's a safe clearing in the middle of the city so you have room to look around.
-SPAWN_X = WORLD_WIDTH // 2
-SPAWN_Y = WORLD_HEIGHT // 2
-SPAWN_SIZE = 200  # 200x200 pixel square
-SPAWN_RECT = pygame.Rect(
-    SPAWN_X - SPAWN_SIZE // 2, SPAWN_Y - SPAWN_SIZE // 2, SPAWN_SIZE, SPAWN_SIZE
-)
-
-# ============================================================
-# BIOMES - different areas of the world!
-# ============================================================
-# The world is split into 5 biomes:
-#   Forest (top-left), Snow (top-right), City (center),
-#   Swamp (bottom-left), Desert (bottom-right)
-#
-# Layout (roughly):
-#   +-----------+-----------+
-#   |  FOREST   |   SNOW    |
-#   |           |           |
-#   +-----+----+----+------+
-#   |     |  CITY   |      |
-#   |     |         |      |
-#   +-----+----+----+------+
-#   |  SWAMP   |  DESERT   |
-#   |          |            |
-#   +----------+-----------+
-
-BIOME_CITY = "city"
-BIOME_FOREST = "forest"
-BIOME_DESERT = "desert"
-BIOME_SNOW = "snow"
-BIOME_SWAMP = "swamp"
-
-# City occupies the center chunk of the map
-CITY_X1 = 3000
-CITY_Y1 = 3000
-CITY_X2 = 7000
-CITY_Y2 = 7000
-
-# Ground colors for each biome
-BIOME_COLORS = {
-    BIOME_CITY: (190, 185, 175),  # cement gray
-    BIOME_FOREST: (80, 140, 55),  # lush green grass
-    BIOME_DESERT: (220, 190, 130),  # warm sand
-    BIOME_SNOW: (230, 235, 245),  # bright white snow
-    BIOME_SWAMP: (60, 80, 50),  # dark murky green
-}
-
-
-def get_biome(x, y):
-    """Figure out which biome a world position is in."""
-    # City is the center rectangle
-    if CITY_X1 <= x <= CITY_X2 and CITY_Y1 <= y <= CITY_Y2:
-        return BIOME_CITY
-    # Top-left = Forest
-    if x < WORLD_WIDTH // 2 and y < WORLD_HEIGHT // 2:
-        return BIOME_FOREST
-    # Top-right = Snow
-    if x >= WORLD_WIDTH // 2 and y < WORLD_HEIGHT // 2:
-        return BIOME_SNOW
-    # Bottom-left = Swamp
-    if x < WORLD_WIDTH // 2 and y >= WORLD_HEIGHT // 2:
-        return BIOME_SWAMP
-    # Bottom-right = Desert
-    return BIOME_DESERT
 
 
 # ============================================================
