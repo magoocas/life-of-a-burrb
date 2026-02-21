@@ -74,27 +74,27 @@ life-of-a-burrb/
 
 ## Phase 4: Rendering
 
-- [ ] Create `src/rendering/` package with `__init__.py`
-- [ ] Create `src/rendering/world.py` — move `draw_road_grid`, `draw_tree`, `draw_biome_object`, `draw_biome_collectible`, `draw_biome_ground`
-- [ ] Create `src/rendering/entities.py` — move `draw_burrb`, `draw_npc_topdown`, `draw_car_topdown`
-- [ ] Create `src/rendering/interior.py` — move `draw_interior_topdown`
-- [ ] Create `src/rendering/effects.py` — extract ability visual effects + tongue rendering from main loop
-- [ ] Create `src/rendering/ui.py` — extract HUD rendering (hearts, currencies, ability bars, prompts, title, death screen)
-- [ ] Create `src/rendering/shop.py` — move `draw_shop` + `get_shop_tab_info`
-- [ ] Create `src/rendering/jumpscare.py` — move + simplify `draw_jumpscare`
-- [ ] Verify game runs
-- [ ] Commit + push
+- [x] Create `src/rendering/` package with `__init__.py`
+- [x] Create `src/rendering/world.py` — move `draw_road_grid`, `draw_tree`, `draw_biome_object`, `draw_biome_collectible`, `draw_biome_ground`
+- [x] Create `src/rendering/entities.py` — move `draw_burrb`, `draw_npc_topdown`, `draw_car_topdown`
+- [x] Create `src/rendering/interior.py` — move `draw_interior_topdown`
+- [x] Create `src/rendering/effects.py` — extract ability visual effects + tongue rendering from main loop
+- [x] Create `src/rendering/ui.py` — extract HUD rendering (hearts, currencies, ability bars, prompts, title, death screen)
+- [x] Create `src/rendering/shop.py` — move `draw_shop` + `get_shop_tab_info`
+- [x] Create `src/rendering/jumpscare.py` — move + simplify `draw_jumpscare`
+- [x] Verify game runs
+- [x] Commit + push
 
 ## Phase 5: Game Systems
 
-- [ ] Create `src/systems/` package with `__init__.py`
-- [ ] Create `src/systems/abilities.py` — new `AbilityManager` class (21 abilities, unlock states, timers, cooldowns, per-frame updates)
-- [ ] Create `src/systems/combat.py` — extract tongue mechanics, NPC attack/damage, resident/monster chase logic
-- [ ] Create `src/systems/collision.py` — move `can_move_to`, `can_move_interior`, `get_nearby_door_building`, `is_at_interior_door`
-- [ ] Create `src/systems/camera.py` — extract camera follow + earthquake shake
-- [ ] Create `src/systems/shop.py` — shop state + purchasing logic (separate from rendering)
-- [ ] Verify game runs
-- [ ] Commit + push
+- [x] Create `src/systems/` package with `__init__.py`
+- [x] Create `src/systems/abilities.py` — new `AbilityManager` class (21 abilities, unlock states, timers, cooldowns, per-frame updates)
+- [x] Create `src/systems/combat.py` — extract tongue mechanics, NPC attack/damage, resident/monster chase logic
+- [x] Create `src/systems/collision.py` — move `can_move_to`, `can_move_interior`, `get_nearby_door_building`, `is_at_interior_door`
+- [x] Create `src/systems/camera.py` — extract camera follow + earthquake shake
+- [x] Create `src/systems/shop.py` — shop state + purchasing logic (separate from rendering)
+- [x] Verify game runs
+- [x] Commit + push
 
 ## Phase 6: Input Handling
 

@@ -119,6 +119,22 @@ from src.rendering.ui import (
 from src.rendering.shop import draw_shop, get_shop_tab_info
 from src.rendering.jumpscare import draw_jumpscare
 
+# --- Refactored imports (Phase 5) ---
+from src.systems.collision import (
+    can_move_to as _collision_can_move_to,
+    can_move_interior,
+    get_nearby_door_building as _get_nearby_door_building,
+    is_at_interior_door,
+)
+from src.systems.camera import update_camera
+from src.systems.combat import (
+    update_tongue as _update_tongue,
+    update_npc_attacks,
+    update_death_and_respawn,
+)
+from src.systems.abilities import AbilityManager
+from src.systems.shop import try_buy_ability
+
 # Initialize pygame - this starts up the game engine
 pygame.init()
 
@@ -159,61 +175,22 @@ cars = _world.cars
 
 
 # ============================================================
-# INTERIOR DRAWING AND COLLISION
+# INTERIOR DRAWING AND COLLISION (Phase 5: delegating to src/systems/collision.py)
 # ============================================================
 
 
-def can_move_interior(bld, x, y):
-    """Check if the burrb can move to (x,y) inside a building."""
-    tile = bld.interior_tile
-    # Check a small rect around the burrb
-    for check_x, check_y in [
-        (x - 6, y - 6),
-        (x + 6, y - 6),
-        (x - 6, y + 6),
-        (x + 6, y + 6),
-    ]:
-        col = int(check_x) // tile
-        row = int(check_y) // tile
-        if row < 0 or row >= bld.interior_h or col < 0 or col >= bld.interior_w:
-            return False
-        cell = bld.interior[row][col]
-        if cell in (
-            Building.WALL,
-            Building.FURNITURE,
-            Building.TV,
-            Building.CLOSET,
-            Building.BED,
-        ):
-            return False
-    return True
+def can_move_to(x, y):
+    """Wrapper: check world-space movement (delegates to systems/collision.py)."""
+    return _collision_can_move_to(x, y, buildings)
 
 
 def get_nearby_door_building(bx, by):
-    """Check if the burrb is near any building's door (outside)."""
-    for b in buildings:
-        # Door center position
-        door_cx = b.door_x + 8
-        door_cy = b.door_y + 24  # bottom of door
-        dx = bx - door_cx
-        dy = by - door_cy
-        dist = math.sqrt(dx * dx + dy * dy)
-        if dist < 30:
-            return b
-    return None
-
-
-def is_at_interior_door(bld, x, y):
-    """Check if the burrb is near the door inside a building."""
-    tile = bld.interior_tile
-    door_x = bld.interior_door_col * tile + tile // 2
-    door_y = bld.interior_door_row * tile + tile // 2
-    dx = x - door_x
-    dy = y - door_y
-    return math.sqrt(dx * dx + dy * dy) < tile * 1.5
+    """Wrapper: find building near door (delegates to systems/collision.py)."""
+    return _get_nearby_door_building(bx, by, buildings)
 
 
 # (draw_interior_topdown and draw_jumpscare moved to src/rendering/ - Phase 4)
+# (can_move_interior and is_at_interior_door imported from src/systems/collision - Phase 5)
 
 # ============================================================
 # GAME STATE
@@ -291,163 +268,47 @@ collect_msg_timer = 0  # frames to show "collected!" message for biome items
 collect_msg_text = ""  # what text to show when you pick something up
 
 # ============================================================
-# ABILITIES!
+# ABILITIES! (Phase 5: managed by AbilityManager in src/systems/abilities.py)
 # ============================================================
 # You can spend potato chips to unlock awesome new powers!
-# Each ability has a cost, an unlocked flag, and some have
-# active timers (they only last a few seconds when used).
-#
-# Ability list:
-#   DASH        - 2 chips - Press SHIFT to zoom forward!
-#   SUPER SPEED - 3 chips - Hold SHIFT to run really fast!
-#   MEGA TONGUE - 3 chips - Tongue reaches twice as far!
-#   FREEZE      - 4 chips - Press F to freeze all nearby burrbs!
-#   INVISIBILITY- 5 chips - Press I to become invisible!
-#   GIANT MODE  - 6 chips - Press G to become HUGE!
-#   BOUNCE      - 4 chips - Press B to bounce over buildings!
-#   TELEPORT    - 5 chips - Press T to teleport forward!
-#   EARTHQUAKE  - 7 chips - Press Q to stun everything nearby!
+# Ability definitions and constants live in src/systems/abilities.py.
+# The AbilityManager instance below owns all state and per-frame updates.
+
+from src.systems.abilities import (
+    ABILITIES,
+    BIOME_ABILITIES,
+    BOUNCE_DURATION,
+    TELEPORT_DISTANCE,
+    EARTHQUAKE_DURATION,
+    EARTHQUAKE_RADIUS,
+    VINE_TRAP_DURATION,
+    VINE_TRAP_RADIUS,
+    CAMOUFLAGE_DURATION,
+    NATURE_HEAL_RADIUS,
+    SANDSTORM_DURATION,
+    SANDSTORM_RADIUS,
+    MAGNET_DURATION,
+    MAGNET_RADIUS,
+    BLIZZARD_DURATION,
+    BLIZZARD_RADIUS,
+    SNOW_CLOAK_DURATION,
+    POISON_CLOUD_DURATION,
+    POISON_CLOUD_RADIUS,
+    SWAMP_MONSTER_DURATION,
+    SWAMP_MONSTER_SPEED,
+    SWAMP_MONSTER_RADIUS,
+    SODA_CAN_DURATION,
+    SODA_CAN_SPEED,
+    SODA_CAN_RADIUS,
+    SODA_CAN_COOLDOWN_TIME,
+)
+
+# Single instance that owns all ability state
+abilities = AbilityManager()
 
 # The shop menu
 shop_open = False  # is the shop screen showing?
 shop_cursor = 0  # which ability is highlighted in the shop
-
-# Ability definitions: (name, cost, key_hint, description)
-ABILITIES = [
-    ("Dash", 2, "SHIFT", "Zoom forward super fast!"),
-    ("Super Speed", 3, "SHIFT hold", "Run way faster!"),
-    ("Mega Tongue", 3, "auto", "Tongue reaches 2x farther!"),
-    ("Freeze", 4, "F", "Freeze all nearby burrbs!"),
-    ("Invisibility", 5, "I", "Turn invisible for 5 sec!"),
-    ("Giant Mode", 6, "G", "Become HUGE for 8 sec!"),
-    ("Bounce", 4, "B", "Jump over buildings!"),
-    ("Teleport", 5, "T", "Warp forward instantly!"),
-    ("Earthquake", 7, "Q", "Stun everything nearby!"),
-]
-
-# Which abilities have been unlocked (bought with chips)
-ability_unlocked = [False] * len(ABILITIES)
-
-# Active ability timers (frames remaining, 0 = not active)
-# Some abilities are always-on once unlocked (Mega Tongue, Super Speed),
-# others are timed bursts.
-dash_cooldown = 0  # frames until dash can be used again
-dash_active = 0  # frames remaining in a dash burst
-freeze_timer = 0  # frames remaining for freeze effect
-invisible_timer = 0  # frames remaining for invisibility
-giant_timer = 0  # frames remaining for giant mode
-giant_scale = 1.0  # current size multiplier (smoothly grows/shrinks)
-bounce_timer = 0  # frames remaining in a bounce (airborne!)
-bounce_cooldown = 0  # frames until next bounce
-bounce_height = 0.0  # current visual height (pixels above ground)
-BOUNCE_DURATION = 45  # how long a bounce lasts (frames)
-teleport_cooldown = 0  # frames until next teleport
-teleport_flash = 0  # frames remaining for the teleport flash effect
-TELEPORT_DISTANCE = 200  # how far you warp forward (pixels)
-earthquake_timer = 0  # frames remaining for earthquake stun
-earthquake_cooldown = 0  # frames until next earthquake
-earthquake_shake = 0  # frames remaining for screen shake
-EARTHQUAKE_DURATION = 240  # how long the stun lasts (4 seconds)
-EARTHQUAKE_RADIUS = 300  # how far the earthquake reaches (pixels)
-
-# ============================================================
-# BIOME ABILITIES!
-# ============================================================
-# Each biome has 3 special abilities bought with that biome's currency.
-# They're organized by biome: forest (berries), desert (gems),
-# snow (snowflakes), swamp (mushrooms).
-#
-# Format: (name, cost, key_hint, description, currency)
-
-BIOME_ABILITIES = [
-    # --- Forest abilities (berries) ---
-    ("Vine Trap", 3, "V", "Trap nearby burrbs in vines!", "berry"),
-    ("Camouflage", 4, "C", "Blend into the ground!", "berry"),
-    ("Nature Heal", 5, "H", "Push enemies away!", "berry"),
-    # --- Desert abilities (gems) ---
-    ("Sandstorm", 4, "N", "Blind all nearby burrbs!", "gem"),
-    ("Magnet", 3, "M", "Pull collectibles toward you!", "gem"),
-    ("Fire Dash", 5, "R", "Dash with a trail of fire!", "gem"),
-    # --- Snow abilities (snowflakes) ---
-    ("Ice Wall", 3, "L", "Create a wall of ice!", "snowflake"),
-    ("Blizzard", 5, "Z", "Freeze AND push burrbs!", "snowflake"),
-    ("Snow Cloak", 4, "X", "Roll fast as a snowball!", "snowflake"),
-    # --- Swamp abilities (mushrooms) ---
-    ("Poison Cloud", 3, "P", "Leave a toxic cloud!", "mushroom"),
-    ("Shadow Step", 4, "J", "Teleport to nearest shadow!", "mushroom"),
-    ("Swamp Monster", 6, "K", "Summon a monster ally!", "mushroom"),
-]
-
-biome_ability_unlocked = [False] * len(BIOME_ABILITIES)
-
-# Biome ability timers
-vine_trap_timer = 0  # frames remaining for vine trap
-vine_trap_cooldown = 0  # cooldown before next use
-VINE_TRAP_DURATION = 240  # 4 seconds
-VINE_TRAP_RADIUS = 200  # how far the vines reach
-
-camouflage_timer = 0  # frames remaining for camouflage
-CAMOUFLAGE_DURATION = 300  # 5 seconds
-
-nature_heal_timer = 0  # frames remaining for heal push
-nature_heal_cooldown = 0
-NATURE_HEAL_RADIUS = 250
-
-sandstorm_timer = 0  # frames remaining for sandstorm
-sandstorm_cooldown = 0
-SANDSTORM_DURATION = 240  # 4 seconds
-SANDSTORM_RADIUS = 300
-
-magnet_timer = 0  # frames remaining for magnet pull
-magnet_cooldown = 0
-MAGNET_DURATION = 300  # 5 seconds
-MAGNET_RADIUS = 400  # how far it pulls from
-
-fire_dash_active = 0  # frames remaining in fire dash
-fire_dash_cooldown = 0
-fire_trail = []  # list of (x, y, timer) for fire particles
-
-ice_wall_cooldown = 0
-ice_walls = []  # list of (x, y, timer) for ice wall segments
-
-blizzard_timer = 0  # frames remaining for blizzard
-blizzard_cooldown = 0
-BLIZZARD_DURATION = 180  # 3 seconds
-BLIZZARD_RADIUS = 250
-
-snow_cloak_timer = 0  # frames remaining as snowball
-snow_cloak_cooldown = 0
-SNOW_CLOAK_DURATION = 300  # 5 seconds
-
-poison_clouds = []  # list of [x, y, timer] for poison clouds
-poison_cooldown = 0
-POISON_CLOUD_DURATION = 360  # 6 seconds - lasts a while!
-POISON_CLOUD_RADIUS = 60  # size of each cloud
-
-shadow_step_cooldown = 0
-
-swamp_monster_active = False  # is the monster ally alive?
-swamp_monster_x = 0.0
-swamp_monster_y = 0.0
-swamp_monster_timer = 0  # frames remaining
-swamp_monster_walk = 0  # animation frame
-SWAMP_MONSTER_DURATION = 600  # 10 seconds!
-SWAMP_MONSTER_SPEED = 2.0
-SWAMP_MONSTER_RADIUS = 300  # how far it chases enemies
-
-# ============================================================
-# SODA CAN MONSTERS!
-# ============================================================
-# You start with this ability! Press 1 to spawn a pack of mini
-# soda can monsters that chase down nearby burrbs and attack them.
-# They're little angry soda cans with tiny legs that run around
-# biting everything in sight. You get 3 of them at once!
-soda_cans = []  # list of active soda can monsters (dicts)
-SODA_CAN_DURATION = 480  # 8 seconds
-SODA_CAN_SPEED = 2.8  # fast little guys!
-SODA_CAN_RADIUS = 250  # how far they chase enemies
-SODA_CAN_COOLDOWN_TIME = 300  # 5 second cooldown between spawns
-soda_can_cooldown = 0  # frames until you can spawn more
 
 # The shop now has tabs! LEFT/RIGHT arrows switch between tabs.
 shop_tab = 0  # 0=chips, 1=berries, 2=gems, 3=snowflakes, 4=mushrooms
@@ -523,7 +384,10 @@ def touch_hit_button(tx, ty):
     for i, (label, bx, by, br, action) in enumerate(TOUCH_ABILITY_BUTTONS):
         # F=index 3, I=index 4, G=index 5
         ability_idx = i + 3
-        if ability_idx < len(ability_unlocked) and ability_unlocked[ability_idx]:
+        if (
+            ability_idx < len(abilities.ability_unlocked)
+            and abilities.ability_unlocked[ability_idx]
+        ):
             dx = tx - bx
             dy = ty - by
             if dx * dx + dy * dy <= (br + 8) * (br + 8):
@@ -552,7 +416,10 @@ def draw_touch_buttons(surface):
     # Ability buttons (only show if unlocked)
     for i, (label, bx, by, br, action) in enumerate(TOUCH_ABILITY_BUTTONS):
         ability_idx = i + 3
-        if ability_idx < len(ability_unlocked) and ability_unlocked[ability_idx]:
+        if (
+            ability_idx < len(abilities.ability_unlocked)
+            and abilities.ability_unlocked[ability_idx]
+        ):
             btn_surf = pygame.Surface((br * 2 + 2, br * 2 + 2), pygame.SRCALPHA)
             pressed = touch_btn_pressed == action
             # Color-code ability buttons
@@ -588,20 +455,7 @@ def draw_touch_buttons(surface):
             surface.blit(ind_surf, (sx - r - 1, sy - r - 1))
 
 
-# ============================================================
-# COLLISION - so the burrb can't walk through buildings
-# ============================================================
-def can_move_to(x, y):
-    """Check if the burrb can move to position (x, y)."""
-    # World boundaries
-    if x < 20 or x > WORLD_WIDTH - 20 or y < 20 or y > WORLD_HEIGHT - 20:
-        return False
-    # Building collision (use a small rect around the burrb's feet)
-    burrb_rect = pygame.Rect(x - 10, y + 5, 20, 14)
-    for b in buildings:
-        if burrb_rect.colliderect(b.get_rect()):
-            return False
-    return True
+# (can_move_to moved to src/systems/collision.py - Phase 5)
 
 
 async def main():
@@ -613,27 +467,10 @@ async def main():
     global saved_outdoor_x, saved_outdoor_y, saved_outdoor_angle
     global tongue_active, tongue_length, tongue_retracting
     global tongue_angle, tongue_hit_npc
-    global chips_collected, ability_unlocked
+    # (ability state is now managed by the `abilities` AbilityManager object)
+    global chips_collected
     global berries_collected, gems_collected, snowflakes_collected, mushrooms_collected
-    global biome_ability_unlocked, shop_tab
-    global vine_trap_timer, vine_trap_cooldown
-    global camouflage_timer, nature_heal_timer, nature_heal_cooldown
-    global sandstorm_timer, sandstorm_cooldown
-    global magnet_timer, magnet_cooldown
-    global fire_dash_active, fire_dash_cooldown, fire_trail
-    global ice_wall_cooldown, ice_walls
-    global blizzard_timer, blizzard_cooldown
-    global snow_cloak_timer, snow_cloak_cooldown
-    global poison_clouds, poison_cooldown
-    global shadow_step_cooldown
-    global swamp_monster_active, swamp_monster_x, swamp_monster_y
-    global swamp_monster_timer, swamp_monster_walk
-    global soda_cans, soda_can_cooldown
-    global dash_cooldown, dash_active
-    global freeze_timer, invisible_timer, giant_timer, giant_scale
-    global bounce_timer, bounce_cooldown, bounce_height
-    global teleport_cooldown, teleport_flash
-    global earthquake_timer, earthquake_cooldown, earthquake_shake
+    global shop_tab
     global jumpscare_timer, jumpscare_frame, closet_msg_timer, scare_level
     global collect_msg_timer, collect_msg_text
     global cam_x, cam_y
@@ -679,9 +516,9 @@ async def main():
                             shop_tab,
                             ABILITIES,
                             chips_collected,
-                            ability_unlocked,
+                            abilities.ability_unlocked,
                             BIOME_ABILITIES,
-                            biome_ability_unlocked,
+                            abilities.biome_ability_unlocked,
                             berries_collected,
                             gems_collected,
                             snowflakes_collected,
@@ -705,16 +542,16 @@ async def main():
                             # Chip shop - original abilities
                             cost = ABILITIES[shop_cursor][1]
                             if (
-                                not ability_unlocked[shop_cursor]
+                                not abilities.ability_unlocked[shop_cursor]
                                 and chips_collected >= cost
                             ):
                                 chips_collected -= cost
-                                ability_unlocked[shop_cursor] = True
+                                abilities.ability_unlocked[shop_cursor] = True
                         else:
                             # Biome shop - use the right currency
                             cost = tab_abs[shop_cursor][1]
                             real_idx = tab_indices[shop_cursor]
-                            if not biome_ability_unlocked[real_idx] and tab_cur >= cost:
+                            if not abilities.biome_ability_unlocked[real_idx] and tab_cur >= cost:
                                 # Deduct from the right currency
                                 if shop_tab == 1:
                                     berries_collected -= cost
@@ -724,7 +561,7 @@ async def main():
                                     snowflakes_collected -= cost
                                 elif shop_tab == 4:
                                     mushrooms_collected -= cost
-                                biome_ability_unlocked[real_idx] = True
+                                abilities.biome_ability_unlocked[real_idx] = True
                     # Skip all other game input when shop is open
                     continue
 
@@ -875,33 +712,33 @@ async def main():
 
                 # Press F to FREEZE all nearby burrbs!
                 if event.key == pygame.K_f:
-                    if ability_unlocked[3] and freeze_timer <= 0:
-                        freeze_timer = 300  # 5 seconds at 60fps
+                    if abilities.ability_unlocked[3] and abilities.freeze_timer <= 0:
+                        abilities.freeze_timer = 300  # 5 seconds at 60fps
 
                 # Press I to become INVISIBLE!
                 if event.key == pygame.K_i:
-                    if ability_unlocked[4] and invisible_timer <= 0:
-                        invisible_timer = 300  # 5 seconds
+                    if abilities.ability_unlocked[4] and abilities.invisible_timer <= 0:
+                        abilities.invisible_timer = 300  # 5 seconds
 
                 # Press G to become GIANT!
                 if event.key == pygame.K_g:
-                    if ability_unlocked[5] and giant_timer <= 0:
-                        giant_timer = 480  # 8 seconds
+                    if abilities.ability_unlocked[5] and abilities.giant_timer <= 0:
+                        abilities.giant_timer = 480  # 8 seconds
 
                 # Press B to BOUNCE over buildings!
                 if event.key == pygame.K_b:
                     if (
-                        ability_unlocked[6]
-                        and bounce_timer <= 0
-                        and bounce_cooldown <= 0
+                        abilities.ability_unlocked[6]
+                        and abilities.bounce_timer <= 0
+                        and abilities.bounce_cooldown <= 0
                     ):
                         if inside_building is None:  # can't bounce indoors!
-                            bounce_timer = BOUNCE_DURATION
-                            bounce_cooldown = 60  # 1 second cooldown
+                            abilities.bounce_timer = BOUNCE_DURATION
+                            abilities.bounce_cooldown = 60  # 1 second cooldown
 
                 # Press T to TELEPORT forward!
                 if event.key == pygame.K_t:
-                    if ability_unlocked[7] and teleport_cooldown <= 0:
+                    if abilities.ability_unlocked[7] and abilities.teleport_cooldown <= 0:
                         if inside_building is None:  # can't teleport indoors!
                             # Teleport in the direction the burrb is facing
                             tp_x = burrb_x + math.cos(burrb_angle) * TELEPORT_DISTANCE
@@ -927,20 +764,20 @@ async def main():
                                     tp_y = burrb_y
                             burrb_x = tp_x
                             burrb_y = tp_y
-                            teleport_cooldown = 90  # 1.5 second cooldown
-                            teleport_flash = 15  # flash effect for 0.25 seconds
+                            abilities.teleport_cooldown = 90  # 1.5 second cooldown
+                            abilities.teleport_flash = 15  # flash effect for 0.25 seconds
 
                 # Press Q for EARTHQUAKE!
                 if event.key == pygame.K_q:
                     if (
-                        ability_unlocked[8]
-                        and earthquake_timer <= 0
-                        and earthquake_cooldown <= 0
+                        abilities.ability_unlocked[8]
+                        and abilities.earthquake_timer <= 0
+                        and abilities.earthquake_cooldown <= 0
                     ):
                         if inside_building is None:  # can't earthquake indoors!
-                            earthquake_timer = EARTHQUAKE_DURATION
-                            earthquake_cooldown = 360  # 6 second cooldown
-                            earthquake_shake = 30  # screen shakes for 0.5 seconds
+                            abilities.earthquake_timer = EARTHQUAKE_DURATION
+                            abilities.earthquake_cooldown = 360  # 6 second cooldown
+                            abilities.earthquake_shake = 30  # screen shakes for 0.5 seconds
                             # Stun all NPCs in range - flip their direction and slow them
                             for npc in npcs:
                                 if npc.npc_type == "rock":
@@ -970,13 +807,13 @@ async def main():
                 # Press V for VINE TRAP! (Forest - index 0)
                 if event.key == pygame.K_v:
                     if (
-                        biome_ability_unlocked[0]
-                        and vine_trap_timer <= 0
-                        and vine_trap_cooldown <= 0
+                        abilities.biome_ability_unlocked[0]
+                        and abilities.vine_trap_timer <= 0
+                        and abilities.vine_trap_cooldown <= 0
                     ):
                         if inside_building is None:
-                            vine_trap_timer = VINE_TRAP_DURATION
-                            vine_trap_cooldown = 300  # 5 sec cooldown
+                            abilities.vine_trap_timer = VINE_TRAP_DURATION
+                            abilities.vine_trap_cooldown = 300  # 5 sec cooldown
                             # Trap all NPCs in range!
                             for npc in npcs:
                                 if npc.npc_type == "rock":
@@ -990,19 +827,19 @@ async def main():
 
                 # Press C for CAMOUFLAGE! (Forest - index 1)
                 if event.key == pygame.K_c:
-                    if biome_ability_unlocked[1] and camouflage_timer <= 0:
-                        camouflage_timer = CAMOUFLAGE_DURATION
+                    if abilities.biome_ability_unlocked[1] and abilities.camouflage_timer <= 0:
+                        abilities.camouflage_timer = CAMOUFLAGE_DURATION
 
                 # Press H for NATURE HEAL! (Forest - index 2)
                 if event.key == pygame.K_h:
                     if (
-                        biome_ability_unlocked[2]
-                        and nature_heal_timer <= 0
-                        and nature_heal_cooldown <= 0
+                        abilities.biome_ability_unlocked[2]
+                        and abilities.nature_heal_timer <= 0
+                        and abilities.nature_heal_cooldown <= 0
                     ):
                         if inside_building is None:
-                            nature_heal_timer = 30  # brief push effect
-                            nature_heal_cooldown = 300
+                            abilities.nature_heal_timer = 30  # brief push effect
+                            abilities.nature_heal_cooldown = 300
                             # Push all nearby NPCs away hard!
                             for npc in npcs:
                                 if npc.npc_type == "rock":
@@ -1018,13 +855,13 @@ async def main():
                 # Press N for SANDSTORM! (Desert - index 3)
                 if event.key == pygame.K_n:
                     if (
-                        biome_ability_unlocked[3]
-                        and sandstorm_timer <= 0
-                        and sandstorm_cooldown <= 0
+                        abilities.biome_ability_unlocked[3]
+                        and abilities.sandstorm_timer <= 0
+                        and abilities.sandstorm_cooldown <= 0
                     ):
                         if inside_building is None:
-                            sandstorm_timer = SANDSTORM_DURATION
-                            sandstorm_cooldown = 360
+                            abilities.sandstorm_timer = SANDSTORM_DURATION
+                            abilities.sandstorm_cooldown = 360
                             # Slow + confuse all NPCs in range
                             for npc in npcs:
                                 if npc.npc_type == "rock":
@@ -1039,29 +876,29 @@ async def main():
                 # Press M for MAGNET! (Desert - index 4)
                 if event.key == pygame.K_m:
                     if (
-                        biome_ability_unlocked[4]
-                        and magnet_timer <= 0
-                        and magnet_cooldown <= 0
+                        abilities.biome_ability_unlocked[4]
+                        and abilities.magnet_timer <= 0
+                        and abilities.magnet_cooldown <= 0
                     ):
-                        magnet_timer = MAGNET_DURATION
-                        magnet_cooldown = 360
+                        abilities.magnet_timer = MAGNET_DURATION
+                        abilities.magnet_cooldown = 360
 
                 # Press R for FIRE DASH! (Desert - index 5)
                 if event.key == pygame.K_r:
                     if (
-                        biome_ability_unlocked[5]
-                        and fire_dash_active <= 0
-                        and fire_dash_cooldown <= 0
+                        abilities.biome_ability_unlocked[5]
+                        and abilities.fire_dash_active <= 0
+                        and abilities.fire_dash_cooldown <= 0
                     ):
                         if inside_building is None:
-                            fire_dash_active = 20  # quick burst
-                            fire_dash_cooldown = 90
+                            abilities.fire_dash_active = 20  # quick burst
+                            abilities.fire_dash_cooldown = 90
 
                 # Press L for ICE WALL! (Snow - index 6)
                 if event.key == pygame.K_l:
-                    if biome_ability_unlocked[6] and ice_wall_cooldown <= 0:
+                    if abilities.biome_ability_unlocked[6] and abilities.ice_wall_cooldown <= 0:
                         if inside_building is None:
-                            ice_wall_cooldown = 180  # 3 sec cooldown
+                            abilities.ice_wall_cooldown = 180  # 3 sec cooldown
                             # Place ice wall segments perpendicular to facing direction
                             perp = burrb_angle + math.pi / 2
                             wall_dist = 40  # how far in front
@@ -1070,18 +907,18 @@ async def main():
                             for seg in range(-2, 3):
                                 wx = cx + math.cos(perp) * seg * 25
                                 wy = cy + math.sin(perp) * seg * 25
-                                ice_walls.append([wx, wy, 480])  # lasts 8 seconds
+                                abilities.ice_walls.append([wx, wy, 480])  # lasts 8 seconds
 
                 # Press Z for BLIZZARD! (Snow - index 7)
                 if event.key == pygame.K_z:
                     if (
-                        biome_ability_unlocked[7]
-                        and blizzard_timer <= 0
-                        and blizzard_cooldown <= 0
+                        abilities.biome_ability_unlocked[7]
+                        and abilities.blizzard_timer <= 0
+                        and abilities.blizzard_cooldown <= 0
                     ):
                         if inside_building is None:
-                            blizzard_timer = BLIZZARD_DURATION
-                            blizzard_cooldown = 360
+                            abilities.blizzard_timer = BLIZZARD_DURATION
+                            abilities.blizzard_cooldown = 360
                             # Freeze AND push all NPCs in range
                             for npc in npcs:
                                 if npc.npc_type == "rock":
@@ -1099,27 +936,27 @@ async def main():
                 # Press X for SNOW CLOAK! (Snow - index 8)
                 if event.key == pygame.K_x:
                     if (
-                        biome_ability_unlocked[8]
-                        and snow_cloak_timer <= 0
-                        and snow_cloak_cooldown <= 0
+                        abilities.biome_ability_unlocked[8]
+                        and abilities.snow_cloak_timer <= 0
+                        and abilities.snow_cloak_cooldown <= 0
                     ):
-                        snow_cloak_timer = SNOW_CLOAK_DURATION
-                        snow_cloak_cooldown = 360
+                        abilities.snow_cloak_timer = SNOW_CLOAK_DURATION
+                        abilities.snow_cloak_cooldown = 360
 
                 # Press P for POISON CLOUD! (Swamp - index 9)
                 if event.key == pygame.K_p:
-                    if biome_ability_unlocked[9] and poison_cooldown <= 0:
+                    if abilities.biome_ability_unlocked[9] and abilities.poison_cooldown <= 0:
                         if inside_building is None:
-                            poison_cooldown = 240
-                            poison_clouds.append(
+                            abilities.poison_cooldown = 240
+                            abilities.poison_clouds.append(
                                 [burrb_x, burrb_y, POISON_CLOUD_DURATION]
                             )
 
                 # Press J for SHADOW STEP! (Swamp - index 10)
                 if event.key == pygame.K_j:
-                    if biome_ability_unlocked[10] and shadow_step_cooldown <= 0:
+                    if abilities.biome_ability_unlocked[10] and abilities.shadow_step_cooldown <= 0:
                         if inside_building is None:
-                            shadow_step_cooldown = 120  # 2 sec cooldown
+                            abilities.shadow_step_cooldown = 120  # 2 sec cooldown
                             # Find nearest tree or dead_tree or building to teleport to
                             best_dist = 999999
                             best_x, best_y = burrb_x, burrb_y
@@ -1144,18 +981,18 @@ async def main():
                             if best_dist < 999999:
                                 burrb_x = best_x
                                 burrb_y = best_y
-                                teleport_flash = 15  # reuse the flash effect
+                                abilities.teleport_flash = 15  # reuse the flash effect
 
                 # Press 1 for SODA CAN MONSTERS! (free ability - no purchase needed!)
                 if event.key == pygame.K_1:
-                    if len(soda_cans) == 0 and soda_can_cooldown <= 0:
+                    if len(abilities.soda_cans) == 0 and abilities.soda_can_cooldown <= 0:
                         if inside_building is None:
                             # Spawn 3 mini soda cans around the player!
                             for i in range(3):
                                 angle = i * (2 * math.pi / 3)  # spread evenly
                                 sx = burrb_x + math.cos(angle) * 25
                                 sy = burrb_y + math.sin(angle) * 25
-                                soda_cans.append(
+                                abilities.soda_cans.append(
                                     {
                                         "x": sx,
                                         "y": sy,
@@ -1164,17 +1001,17 @@ async def main():
                                         "attack_cd": 0,
                                     }
                                 )
-                            soda_can_cooldown = SODA_CAN_COOLDOWN_TIME
+                            abilities.soda_can_cooldown = SODA_CAN_COOLDOWN_TIME
 
                 # Press K for SWAMP MONSTER! (Swamp - index 11)
                 if event.key == pygame.K_k:
-                    if biome_ability_unlocked[11] and not swamp_monster_active:
+                    if abilities.biome_ability_unlocked[11] and not abilities.swamp_monster_active:
                         if inside_building is None:
-                            swamp_monster_active = True
-                            swamp_monster_x = burrb_x + 30
-                            swamp_monster_y = burrb_y + 30
-                            swamp_monster_timer = SWAMP_MONSTER_DURATION
-                            swamp_monster_walk = 0
+                            abilities.swamp_monster_active = True
+                            abilities.swamp_monster_x = burrb_x + 30
+                            abilities.swamp_monster_y = burrb_y + 30
+                            abilities.swamp_monster_timer = SWAMP_MONSTER_DURATION
+                            abilities.swamp_monster_walk = 0
 
             # === TOUCH / MOUSE INPUT ===
             # Handle finger touch events (phones/tablets) AND mouse clicks
@@ -1360,9 +1197,9 @@ async def main():
                     shop_tab,
                     ABILITIES,
                     chips_collected,
-                    ability_unlocked,
+                    abilities.ability_unlocked,
                     BIOME_ABILITIES,
-                    biome_ability_unlocked,
+                    abilities.biome_ability_unlocked,
                     berries_collected,
                     gems_collected,
                     snowflakes_collected,
@@ -1393,14 +1230,14 @@ async def main():
                             # Already selected - try to buy!
                             if shop_tab == 0:
                                 cost = ABILITIES[i][1]
-                                if not ability_unlocked[i] and chips_collected >= cost:
+                                if not abilities.ability_unlocked[i] and chips_collected >= cost:
                                     chips_collected -= cost
-                                    ability_unlocked[i] = True
+                                    abilities.ability_unlocked[i] = True
                             else:
                                 cost = tab_abs[i][1]
                                 real_idx = tab_indices[i]
                                 if (
-                                    not biome_ability_unlocked[real_idx]
+                                    not abilities.biome_ability_unlocked[real_idx]
                                     and tab_cur >= cost
                                 ):
                                     if shop_tab == 1:
@@ -1411,7 +1248,7 @@ async def main():
                                         snowflakes_collected -= cost
                                     elif shop_tab == 4:
                                         mushrooms_collected -= cost
-                                    biome_ability_unlocked[real_idx] = True
+                                    abilities.biome_ability_unlocked[real_idx] = True
                         else:
                             shop_cursor = i
                         touch_held = False
@@ -1425,9 +1262,9 @@ async def main():
                 shop_cursor,
                 ABILITIES,
                 chips_collected,
-                ability_unlocked,
+                abilities.ability_unlocked,
                 BIOME_ABILITIES,
-                biome_ability_unlocked,
+                abilities.biome_ability_unlocked,
                 berries_collected,
                 gems_collected,
                 snowflakes_collected,
@@ -1442,16 +1279,16 @@ async def main():
 
         # --- ABILITY TIMERS ---
         # Count down all active ability timers each frame
-        if dash_cooldown > 0:
-            dash_cooldown -= 1
-        if dash_active > 0:
-            dash_active -= 1
-        if freeze_timer > 0:
-            freeze_timer -= 1
-        if invisible_timer > 0:
-            invisible_timer -= 1
-        if giant_timer > 0:
-            giant_timer -= 1
+        if abilities.dash_cooldown > 0:
+            abilities.dash_cooldown -= 1
+        if abilities.dash_active > 0:
+            abilities.dash_active -= 1
+        if abilities.freeze_timer > 0:
+            abilities.freeze_timer -= 1
+        if abilities.invisible_timer > 0:
+            abilities.invisible_timer -= 1
+        if abilities.giant_timer > 0:
+            abilities.giant_timer -= 1
         if jumpscare_timer > 0:
             jumpscare_timer -= 1
             jumpscare_frame += 1
@@ -1460,31 +1297,31 @@ async def main():
         if collect_msg_timer > 0:
             collect_msg_timer -= 1
         # Smoothly grow/shrink for giant mode
-        target_giant = 2.5 if giant_timer > 0 else 1.0
-        giant_scale += (target_giant - giant_scale) * 0.15
+        target_giant = 2.5 if abilities.giant_timer > 0 else 1.0
+        abilities.giant_scale += (target_giant - abilities.giant_scale) * 0.15
 
         # Bounce timer and height (smooth arc using sine!)
-        if bounce_timer > 0:
-            bounce_timer -= 1
+        if abilities.bounce_timer > 0:
+            abilities.bounce_timer -= 1
             # Sine curve: goes up then comes back down smoothly
-            t = bounce_timer / BOUNCE_DURATION  # 1.0 -> 0.0
-            bounce_height = math.sin(t * math.pi) * 80  # max 80 pixels high
+            t = abilities.bounce_timer / BOUNCE_DURATION  # 1.0 -> 0.0
+            abilities.bounce_height = math.sin(t * math.pi) * 80  # max 80 pixels high
         else:
-            bounce_height = 0.0
-        if bounce_cooldown > 0:
-            bounce_cooldown -= 1
+            abilities.bounce_height = 0.0
+        if abilities.bounce_cooldown > 0:
+            abilities.bounce_cooldown -= 1
 
         # Teleport cooldown and flash
-        if teleport_cooldown > 0:
-            teleport_cooldown -= 1
-        if teleport_flash > 0:
-            teleport_flash -= 1
+        if abilities.teleport_cooldown > 0:
+            abilities.teleport_cooldown -= 1
+        if abilities.teleport_flash > 0:
+            abilities.teleport_flash -= 1
 
         # Earthquake timers
-        if earthquake_timer > 0:
-            earthquake_timer -= 1
+        if abilities.earthquake_timer > 0:
+            abilities.earthquake_timer -= 1
             # When earthquake ends, unstun NPCs and cars
-            if earthquake_timer <= 0:
+            if abilities.earthquake_timer <= 0:
                 for npc in npcs:
                     if npc.npc_type != "rock":
                         npc.speed = random.uniform(0.5, 1.5)
@@ -1492,39 +1329,39 @@ async def main():
                 for car in cars:
                     if car.speed == 0.0:
                         car.speed = random.uniform(1.2, 2.5)
-        if earthquake_cooldown > 0:
-            earthquake_cooldown -= 1
-        if earthquake_shake > 0:
-            earthquake_shake -= 1
+        if abilities.earthquake_cooldown > 0:
+            abilities.earthquake_cooldown -= 1
+        if abilities.earthquake_shake > 0:
+            abilities.earthquake_shake -= 1
 
         # --- BIOME ABILITY TIMERS ---
-        if vine_trap_timer > 0:
-            vine_trap_timer -= 1
+        if abilities.vine_trap_timer > 0:
+            abilities.vine_trap_timer -= 1
             # When vine trap ends, unstun NPCs
-            if vine_trap_timer <= 0:
+            if abilities.vine_trap_timer <= 0:
                 for npc in npcs:
                     if npc.npc_type != "rock" and npc.speed == 0.0:
                         npc.speed = random.uniform(0.5, 1.5)
                         npc.dir_timer = random.randint(30, 120)
-        if vine_trap_cooldown > 0:
-            vine_trap_cooldown -= 1
-        if camouflage_timer > 0:
-            camouflage_timer -= 1
-        if nature_heal_timer > 0:
-            nature_heal_timer -= 1
-        if nature_heal_cooldown > 0:
-            nature_heal_cooldown -= 1
-        if sandstorm_timer > 0:
-            sandstorm_timer -= 1
-            if sandstorm_timer <= 0:
+        if abilities.vine_trap_cooldown > 0:
+            abilities.vine_trap_cooldown -= 1
+        if abilities.camouflage_timer > 0:
+            abilities.camouflage_timer -= 1
+        if abilities.nature_heal_timer > 0:
+            abilities.nature_heal_timer -= 1
+        if abilities.nature_heal_cooldown > 0:
+            abilities.nature_heal_cooldown -= 1
+        if abilities.sandstorm_timer > 0:
+            abilities.sandstorm_timer -= 1
+            if abilities.sandstorm_timer <= 0:
                 for npc in npcs:
                     if npc.npc_type != "rock" and npc.speed < 0.5:
                         npc.speed = random.uniform(0.5, 1.5)
                         npc.dir_timer = random.randint(30, 120)
-        if sandstorm_cooldown > 0:
-            sandstorm_cooldown -= 1
-        if magnet_timer > 0:
-            magnet_timer -= 1
+        if abilities.sandstorm_cooldown > 0:
+            abilities.sandstorm_cooldown -= 1
+        if abilities.magnet_timer > 0:
+            abilities.magnet_timer -= 1
             # Pull uncollected items toward the burrb!
             if inside_building is None:
                 for coll in biome_collectibles:
@@ -1537,21 +1374,21 @@ async def main():
                         pull_speed = 3.0
                         coll[0] += (mdx / mdist) * pull_speed
                         coll[1] += (mdy / mdist) * pull_speed
-        if magnet_cooldown > 0:
-            magnet_cooldown -= 1
-        if fire_dash_active > 0:
-            fire_dash_active -= 1
+        if abilities.magnet_cooldown > 0:
+            abilities.magnet_cooldown -= 1
+        if abilities.fire_dash_active > 0:
+            abilities.fire_dash_active -= 1
             # Drop fire particles behind the burrb
             if inside_building is None:
-                fire_trail.append([burrb_x, burrb_y, 60])  # lasts 1 second
-        if fire_dash_cooldown > 0:
-            fire_dash_cooldown -= 1
+                abilities.fire_trail.append([burrb_x, burrb_y, 60])  # lasts 1 second
+        if abilities.fire_dash_cooldown > 0:
+            abilities.fire_dash_cooldown -= 1
         # Update fire trail
-        for ft in fire_trail:
+        for ft in abilities.fire_trail:
             ft[2] -= 1
-        fire_trail = [ft for ft in fire_trail if ft[2] > 0]
+        abilities.fire_trail = [ft for ft in abilities.fire_trail if ft[2] > 0]
         # Fire damages NPCs that walk through it!
-        for ft in fire_trail:
+        for ft in abilities.fire_trail:
             for npc in npcs:
                 if npc.npc_type == "rock":
                     continue
@@ -1561,13 +1398,13 @@ async def main():
                     npc.x += ((npc.x - ft[0]) / fd) * 5
                     npc.y += ((npc.y - ft[1]) / fd) * 5
         # Update ice walls
-        for iw in ice_walls:
+        for iw in abilities.ice_walls:
             iw[2] -= 1
-        ice_walls = [iw for iw in ice_walls if iw[2] > 0]
-        if ice_wall_cooldown > 0:
-            ice_wall_cooldown -= 1
+        abilities.ice_walls = [iw for iw in abilities.ice_walls if iw[2] > 0]
+        if abilities.ice_wall_cooldown > 0:
+            abilities.ice_wall_cooldown -= 1
         # Ice walls block NPCs
-        for iw in ice_walls:
+        for iw in abilities.ice_walls:
             for npc in npcs:
                 if npc.npc_type == "rock":
                     continue
@@ -1576,21 +1413,21 @@ async def main():
                     # Push NPC away from wall
                     npc.x += ((npc.x - iw[0]) / wd) * 3
                     npc.y += ((npc.y - iw[1]) / wd) * 3
-        if blizzard_timer > 0:
-            blizzard_timer -= 1
-            if blizzard_timer <= 0:
+        if abilities.blizzard_timer > 0:
+            abilities.blizzard_timer -= 1
+            if abilities.blizzard_timer <= 0:
                 for npc in npcs:
                     if npc.npc_type != "rock" and npc.speed == 0.0:
                         npc.speed = random.uniform(0.5, 1.5)
                         npc.dir_timer = random.randint(30, 120)
-        if blizzard_cooldown > 0:
-            blizzard_cooldown -= 1
-        if snow_cloak_timer > 0:
-            snow_cloak_timer -= 1
-        if snow_cloak_cooldown > 0:
-            snow_cloak_cooldown -= 1
+        if abilities.blizzard_cooldown > 0:
+            abilities.blizzard_cooldown -= 1
+        if abilities.snow_cloak_timer > 0:
+            abilities.snow_cloak_timer -= 1
+        if abilities.snow_cloak_cooldown > 0:
+            abilities.snow_cloak_cooldown -= 1
         # Update poison clouds
-        for pc in poison_clouds:
+        for pc in abilities.poison_clouds:
             pc[2] -= 1
             # Push NPCs away from poison
             for npc in npcs:
@@ -1600,17 +1437,17 @@ async def main():
                 if pd < POISON_CLOUD_RADIUS and pd > 1:
                     npc.x += ((npc.x - pc[0]) / pd) * 2
                     npc.y += ((npc.y - pc[1]) / pd) * 2
-        poison_clouds = [pc for pc in poison_clouds if pc[2] > 0]
-        if poison_cooldown > 0:
-            poison_cooldown -= 1
-        if shadow_step_cooldown > 0:
-            shadow_step_cooldown -= 1
+        abilities.poison_clouds = [pc for pc in abilities.poison_clouds if pc[2] > 0]
+        if abilities.poison_cooldown > 0:
+            abilities.poison_cooldown -= 1
+        if abilities.shadow_step_cooldown > 0:
+            abilities.shadow_step_cooldown -= 1
         # Swamp monster AI
-        if swamp_monster_active:
-            swamp_monster_timer -= 1
-            swamp_monster_walk += 1
-            if swamp_monster_timer <= 0:
-                swamp_monster_active = False
+        if abilities.swamp_monster_active:
+            abilities.swamp_monster_timer -= 1
+            abilities.swamp_monster_walk += 1
+            if abilities.swamp_monster_timer <= 0:
+                abilities.swamp_monster_active = False
             else:
                 # Find nearest NPC and chase it
                 nearest_npc = None
@@ -1619,7 +1456,7 @@ async def main():
                     if npc.npc_type == "rock":
                         continue
                     md = math.sqrt(
-                        (npc.x - swamp_monster_x) ** 2 + (npc.y - swamp_monster_y) ** 2
+                        (npc.x - abilities.swamp_monster_x) ** 2 + (npc.y - abilities.swamp_monster_y) ** 2
                     )
                     if md < nearest_dist:
                         nearest_dist = md
@@ -1627,42 +1464,42 @@ async def main():
                 if nearest_npc is not None:
                     md = nearest_dist
                     if md > 1:
-                        swamp_monster_x += (
-                            (nearest_npc.x - swamp_monster_x) / md
+                        abilities.swamp_monster_x += (
+                            (nearest_npc.x - abilities.swamp_monster_x) / md
                         ) * SWAMP_MONSTER_SPEED
-                        swamp_monster_y += (
-                            (nearest_npc.y - swamp_monster_y) / md
+                        abilities.swamp_monster_y += (
+                            (nearest_npc.y - abilities.swamp_monster_y) / md
                         ) * SWAMP_MONSTER_SPEED
                     # Push NPC away on contact
                     if md < 20 and md > 1:
-                        nearest_npc.x += ((nearest_npc.x - swamp_monster_x) / md) * 8
-                        nearest_npc.y += ((nearest_npc.y - swamp_monster_y) / md) * 8
+                        nearest_npc.x += ((nearest_npc.x - abilities.swamp_monster_x) / md) * 8
+                        nearest_npc.y += ((nearest_npc.y - abilities.swamp_monster_y) / md) * 8
                 else:
                     # No NPC nearby, follow the burrb
                     fd = math.sqrt(
-                        (burrb_x - swamp_monster_x) ** 2
-                        + (burrb_y - swamp_monster_y) ** 2
+                        (burrb_x - abilities.swamp_monster_x) ** 2
+                        + (burrb_y - abilities.swamp_monster_y) ** 2
                     )
                     if fd > 50 and fd > 1:
-                        swamp_monster_x += (
-                            (burrb_x - swamp_monster_x) / fd
+                        abilities.swamp_monster_x += (
+                            (burrb_x - abilities.swamp_monster_x) / fd
                         ) * SWAMP_MONSTER_SPEED
-                        swamp_monster_y += (
-                            (burrb_y - swamp_monster_y) / fd
+                        abilities.swamp_monster_y += (
+                            (burrb_y - abilities.swamp_monster_y) / fd
                         ) * SWAMP_MONSTER_SPEED
 
         # Soda can monster AI!
-        if soda_can_cooldown > 0:
-            soda_can_cooldown -= 1
-        for can in soda_cans:
+        if abilities.soda_can_cooldown > 0:
+            abilities.soda_can_cooldown -= 1
+        for can in abilities.soda_cans:
             can["timer"] -= 1
             can["walk"] += 1
             if can["attack_cd"] > 0:
                 can["attack_cd"] -= 1
         # Remove expired soda cans
-        soda_cans = [c for c in soda_cans if c["timer"] > 0]
+        abilities.soda_cans = [c for c in abilities.soda_cans if c["timer"] > 0]
         # Each soda can chases the nearest NPC and bites it!
-        for can in soda_cans:
+        for can in abilities.soda_cans:
             nearest_npc = None
             nearest_dist = SODA_CAN_RADIUS
             for npc in npcs:
@@ -1706,31 +1543,31 @@ async def main():
         # Calculate speed multiplier from abilities!
         speed_mult = 1.0
         # Super Speed: hold SHIFT to go fast (ability index 1)
-        if ability_unlocked[1] and keys[pygame.K_LSHIFT]:
+        if abilities.ability_unlocked[1] and keys[pygame.K_LSHIFT]:
             speed_mult = 2.2
         # Dash: press SHIFT for a burst (ability index 0)
         # Dash activates when SHIFT is pressed and we have the dash ability
-        if ability_unlocked[0] and not ability_unlocked[1]:
+        if abilities.ability_unlocked[0] and not abilities.ability_unlocked[1]:
             # Only dash if super speed is NOT unlocked (otherwise SHIFT = super speed)
-            if keys[pygame.K_LSHIFT] and dash_cooldown <= 0 and dash_active <= 0:
-                dash_active = 12  # 12 frames of dash burst
-                dash_cooldown = 45  # cooldown before next dash
+            if keys[pygame.K_LSHIFT] and abilities.dash_cooldown <= 0 and abilities.dash_active <= 0:
+                abilities.dash_active = 12  # 12 frames of dash burst
+                abilities.dash_cooldown = 45  # cooldown before next dash
         # If BOTH dash and super speed are unlocked, SHIFT = super speed,
         # and dash triggers automatically when you start running fast
-        if ability_unlocked[0] and ability_unlocked[1]:
-            if keys[pygame.K_LSHIFT] and dash_cooldown <= 0 and dash_active <= 0:
-                dash_active = 12
-                dash_cooldown = 45
-        if dash_active > 0:
+        if abilities.ability_unlocked[0] and abilities.ability_unlocked[1]:
+            if keys[pygame.K_LSHIFT] and abilities.dash_cooldown <= 0 and abilities.dash_active <= 0:
+                abilities.dash_active = 12
+                abilities.dash_cooldown = 45
+        if abilities.dash_active > 0:
             speed_mult = max(speed_mult, 4.0)  # dash is faster than super speed
         # Fire Dash: even faster than regular dash with fire!
-        if fire_dash_active > 0:
+        if abilities.fire_dash_active > 0:
             speed_mult = max(speed_mult, 5.0)
         # Snow Cloak: rolling snowball is fast!
-        if snow_cloak_timer > 0:
+        if abilities.snow_cloak_timer > 0:
             speed_mult = max(speed_mult, 3.0)
         # Giant mode makes you a little slower (you're big!)
-        if giant_timer > 0:
+        if abilities.giant_timer > 0:
             speed_mult *= 0.8
         current_speed = burrb_speed * speed_mult
 
@@ -1812,7 +1649,7 @@ async def main():
         else:
             # OUTSIDE - use world collision
             # When bouncing, the burrb is in the air and can fly over buildings!
-            if bounce_timer > 0:
+            if abilities.bounce_timer > 0:
                 new_x = burrb_x + dx
                 new_y = burrb_y + dy
                 # Still clamp to world boundaries
@@ -1841,7 +1678,7 @@ async def main():
         # BUT if we're invisible, they can't see us - they just wander confused!
         if inside_building is not None and inside_building.resident_angry:
             bld = inside_building
-            if invisible_timer > 0 or camouflage_timer > 0:
+            if abilities.invisible_timer > 0 or abilities.camouflage_timer > 0:
                 # Can't see us! Wander randomly
                 rand_angle = math.sin(bld.resident_walk_frame * 0.05) * 0.8
                 chase_dx = math.cos(rand_angle) * bld.resident_speed * 0.5
@@ -1858,8 +1695,8 @@ async def main():
         if (
             inside_building is not None
             and inside_building.resident_angry
-            and invisible_timer <= 0
-            and camouflage_timer <= 0
+            and abilities.invisible_timer <= 0
+            and abilities.camouflage_timer <= 0
         ):
             bld = inside_building
             # Move resident toward the player
@@ -1933,7 +1770,7 @@ async def main():
         # --- UPDATE NPCs ---
         # Every frame, each NPC takes a step and maybe changes direction
         # UNLESS they're frozen by the Freeze ability!
-        if freeze_timer <= 0:
+        if abilities.freeze_timer <= 0:
             for npc in npcs:
                 npc.update(burrb_x, burrb_y, buildings)
         # (When frozen, NPCs just stand perfectly still - like statues!)
@@ -1998,7 +1835,7 @@ async def main():
         # then retracts back. If it hits an NPC, it hurts them!
         # Hit them 3 times to knock them out.
         # Mega Tongue ability doubles the range!
-        effective_tongue_max = tongue_max_length * (2.0 if ability_unlocked[2] else 1.0)
+        effective_tongue_max = tongue_max_length * (2.0 if abilities.ability_unlocked[2] else 1.0)
         if tongue_active:
             if not tongue_retracting:
                 # Tongue is shooting outward
@@ -2047,7 +1884,7 @@ async def main():
         cam_x += (target_cam_x - cam_x) * 0.08
         cam_y += (target_cam_y - cam_y) * 0.08
         # Earthquake screen shake!
-        if earthquake_shake > 0:
+        if abilities.earthquake_shake > 0:
             cam_x += random.randint(-6, 6)
             cam_y += random.randint(-6, 6)
 
@@ -2116,20 +1953,20 @@ async def main():
                 draw_npc_topdown(screen, npc, cam_x, cam_y)
 
             # Freeze overlay on all frozen NPCs
-            draw_freeze_overlay(screen, cam_x, cam_y, npcs, freeze_timer)
+            draw_freeze_overlay(screen, cam_x, cam_y, npcs, abilities.freeze_timer)
 
             # Bounce: draw a shadow on the ground when airborne!
             draw_bounce_shadow(
-                screen, burrb_x, burrb_y, cam_x, cam_y, bounce_timer, bounce_height
+                screen, burrb_x, burrb_y, cam_x, cam_y, abilities.bounce_timer, abilities.bounce_height
             )
 
             # Bounce height offset for drawing the burrb
-            bounce_y_offset = -bounce_height  # negative = up on screen
+            bounce_y_offset = -abilities.bounce_height  # negative = up on screen
 
             # Draw the burrb (with Giant Mode and Invisibility effects!)
-            if giant_scale > 1.05 or invisible_timer > 0:
+            if abilities.giant_scale > 1.05 or abilities.invisible_timer > 0:
                 # Draw to a temp surface so we can scale/alpha it
-                temp_size = int(60 * giant_scale)
+                temp_size = int(60 * abilities.giant_scale)
                 temp_surf = pygame.Surface((temp_size, temp_size), pygame.SRCALPHA)
                 # Draw burrb centered on temp surface
                 draw_burrb(
@@ -2142,15 +1979,15 @@ async def main():
                     walk_frame,
                 )
                 # Scale it up for giant mode
-                if giant_scale > 1.05:
-                    new_w = int(temp_size * giant_scale)
-                    new_h = int(temp_size * giant_scale)
+                if abilities.giant_scale > 1.05:
+                    new_w = int(temp_size * abilities.giant_scale)
+                    new_h = int(temp_size * abilities.giant_scale)
                     temp_surf = pygame.transform.scale(temp_surf, (new_w, new_h))
                 else:
                     new_w = temp_size
                     new_h = temp_size
                 # Invisibility = semi-transparent + blue tint
-                if invisible_timer > 0:
+                if abilities.invisible_timer > 0:
                     temp_surf.set_alpha(60)
                 # Blit at the correct world position (with bounce offset!)
                 blit_x = int(burrb_x - cam_x - new_w // 2)
@@ -2168,14 +2005,14 @@ async def main():
                 )
 
             # --- ABILITY VISUAL EFFECTS (src/rendering/effects.py) ---
-            draw_teleport_flash(screen, burrb_x, burrb_y, cam_x, cam_y, teleport_flash)
+            draw_teleport_flash(screen, burrb_x, burrb_y, cam_x, cam_y, abilities.teleport_flash)
             draw_earthquake_shockwave(
-                screen, burrb_x, burrb_y, cam_x, cam_y, earthquake_shake
+                screen, burrb_x, burrb_y, cam_x, cam_y, abilities.earthquake_shake
             )
             draw_dash_trail(
-                screen, burrb_x, burrb_y, cam_x, cam_y, burrb_angle, dash_active
+                screen, burrb_x, burrb_y, cam_x, cam_y, burrb_angle, abilities.dash_active
             )
-            draw_vine_trap(screen, cam_x, cam_y, npcs, vine_trap_timer)
+            draw_vine_trap(screen, cam_x, cam_y, npcs, abilities.vine_trap_timer)
             draw_camouflage(
                 screen,
                 burrb_x,
@@ -2183,10 +2020,10 @@ async def main():
                 cam_x,
                 cam_y,
                 bounce_y_offset,
-                camouflage_timer,
+                abilities.camouflage_timer,
             )
-            draw_nature_heal(screen, burrb_x, burrb_y, cam_x, cam_y, nature_heal_timer)
-            draw_sandstorm(screen, burrb_x, burrb_y, cam_x, cam_y, sandstorm_timer)
+            draw_nature_heal(screen, burrb_x, burrb_y, cam_x, cam_y, abilities.nature_heal_timer)
+            draw_sandstorm(screen, burrb_x, burrb_y, cam_x, cam_y, abilities.sandstorm_timer)
             draw_magnet(
                 screen,
                 burrb_x,
@@ -2194,15 +2031,15 @@ async def main():
                 cam_x,
                 cam_y,
                 biome_collectibles,
-                magnet_timer,
+                abilities.magnet_timer,
                 MAGNET_RADIUS,
             )
-            draw_fire_trail(screen, cam_x, cam_y, fire_trail)
+            draw_fire_trail(screen, cam_x, cam_y, abilities.fire_trail)
             draw_fire_dash_trail(
-                screen, burrb_x, burrb_y, cam_x, cam_y, burrb_angle, fire_dash_active
+                screen, burrb_x, burrb_y, cam_x, cam_y, burrb_angle, abilities.fire_dash_active
             )
-            draw_ice_walls(screen, cam_x, cam_y, ice_walls)
-            draw_blizzard(screen, burrb_x, burrb_y, cam_x, cam_y, blizzard_timer)
+            draw_ice_walls(screen, cam_x, cam_y, abilities.ice_walls)
+            draw_blizzard(screen, burrb_x, burrb_y, cam_x, cam_y, abilities.blizzard_timer)
             draw_snow_cloak(
                 screen,
                 burrb_x,
@@ -2210,20 +2047,20 @@ async def main():
                 cam_x,
                 cam_y,
                 bounce_y_offset,
-                snow_cloak_timer,
+                abilities.snow_cloak_timer,
             )
-            draw_poison_clouds(screen, cam_x, cam_y, poison_clouds, POISON_CLOUD_RADIUS)
+            draw_poison_clouds(screen, cam_x, cam_y, abilities.poison_clouds, POISON_CLOUD_RADIUS)
             draw_swamp_monster(
                 screen,
                 cam_x,
                 cam_y,
-                swamp_monster_active,
-                swamp_monster_x,
-                swamp_monster_y,
-                swamp_monster_walk,
+                abilities.swamp_monster_active,
+                abilities.swamp_monster_x,
+                abilities.swamp_monster_y,
+                abilities.swamp_monster_walk,
                 inside_building,
             )
-            draw_soda_cans(screen, cam_x, cam_y, soda_cans, inside_building)
+            draw_soda_cans(screen, cam_x, cam_y, abilities.soda_cans, inside_building)
             draw_tongue(
                 screen,
                 burrb_x,
@@ -2268,24 +2105,24 @@ async def main():
         draw_ability_bars(
             screen,
             currency_y,
-            freeze_timer,
-            invisible_timer,
-            giant_timer,
-            dash_active,
-            bounce_timer,
-            earthquake_timer,
-            vine_trap_timer,
-            camouflage_timer,
-            sandstorm_timer,
-            magnet_timer,
-            fire_dash_active,
-            blizzard_timer,
-            snow_cloak_timer,
-            swamp_monster_active,
-            swamp_monster_timer,
-            soda_cans,
-            ability_unlocked,
-            biome_ability_unlocked,
+            abilities.freeze_timer,
+            abilities.invisible_timer,
+            abilities.giant_timer,
+            abilities.dash_active,
+            abilities.bounce_timer,
+            abilities.earthquake_timer,
+            abilities.vine_trap_timer,
+            abilities.camouflage_timer,
+            abilities.sandstorm_timer,
+            abilities.magnet_timer,
+            abilities.fire_dash_active,
+            abilities.blizzard_timer,
+            abilities.snow_cloak_timer,
+            abilities.swamp_monster_active,
+            abilities.swamp_monster_timer,
+            abilities.soda_cans,
+            abilities.ability_unlocked,
+            abilities.biome_ability_unlocked,
             BOUNCE_DURATION,
             EARTHQUAKE_DURATION,
             VINE_TRAP_DURATION,
