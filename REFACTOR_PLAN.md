@@ -53,17 +53,17 @@ life-of-a-burrb/
 - [x] Create `src/settings.py` — move screen settings, FPS, spawn config
 - [x] Create `src/biomes.py` — move biome constants, `BIOME_COLORS`, `get_biome()`
 - [x] Update `game.py` imports, verify game runs
-- [ ] Commit + push
+- [x] Commit + push
 
 ## Phase 2: Entity Classes
 
-- [ ] Create `src/entities/` package with `__init__.py`
-- [ ] Create `src/entities/building.py` — move the `Building` class
-- [ ] Create `src/entities/npc.py` — move the `NPC` class + NPC color/spawn data
-- [ ] Create `src/entities/car.py` — move the `Car` class + car color/spawn data
-- [ ] Create `src/entities/player.py` — new `Player` class encapsulating all player state (position, HP, facing, walk frame, tongue, currencies, interior state, hurt/death timers)
-- [ ] Verify game runs
-- [ ] Commit + push
+- [x] Create `src/entities/` package with `__init__.py`
+- [x] Create `src/entities/building.py` — move the `Building` class
+- [x] Create `src/entities/npc.py` — move the `NPC` class + NPC color/spawn data
+- [x] Create `src/entities/car.py` — move the `Car` class + car color/spawn data
+- [x] Create `src/entities/player.py` — new `Player` class encapsulating all player state (position, HP, facing, walk frame, tongue, currencies, interior state, hurt/death timers)
+- [x] Verify game runs
+- [x] Commit + push
 
 ## Phase 3: World Generation
 
