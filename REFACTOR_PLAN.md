@@ -67,10 +67,10 @@ life-of-a-burrb/
 
 ## Phase 3: World Generation
 
-- [ ] Create `src/world/` package with `__init__.py`
-- [ ] Create `src/world/generator.py` — move all `random.seed(42)` world generation into `generate_world()` returning a `WorldData` dataclass
-- [ ] Verify game runs
-- [ ] Commit + push
+- [x] Create `src/world/` package with `__init__.py`
+- [x] Create `src/world/generator.py` — move all `random.seed(42)` world generation into `generate_world()` returning a `WorldData` dataclass
+- [x] Verify game runs
+- [x] Commit + push
 
 ## Phase 4: Rendering
 
